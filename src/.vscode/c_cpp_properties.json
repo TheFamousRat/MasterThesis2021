@@ -4,8 +4,9 @@
             "name": "Linux",
             "includePath": [
                 "${workspaceFolder}/**",
-                "/home/thefamousrat/Documents/Cpp/Easy3D/",
-                "/home/thefamousrat/Documents/Cpp/Easy3D/easy3d/"
+                "/home/thefamousrat/Documents/Cpp/pmp-library/src/pmp",
+                "/home/thefamousrat/Documents/Cpp/pmp-library/external",
+                "/home/thefamousrat/Documents/Cpp/pmp-library/external/eigen"
             ],
             "defines": [],
             "compilerPath": "/usr/bin/clang",

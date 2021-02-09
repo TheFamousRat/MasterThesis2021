@@ -5,15 +5,24 @@
             "label": "C/C++: g++ build active file",
             "command": "/usr/bin/g++",
             "args": [
-                "-g",
+                "-Wall",
+                
+                "-I",
+                "/home/thefamousrat/Documents/Cpp/pmp-library/external",
+                "-I",
+                "/home/thefamousrat/Documents/Cpp/pmp-library/external/eigen",
+                "-I",
+                "/home/thefamousrat/Documents/Cpp/pmp-library",
+                
                 "${file}",
+                
                 "-o",
                 "${fileDirname}/${fileBasenameNoExtension}",
-                "-I",
-                "/home/thefamousrat/Documents/Cpp/Easy3D",
-                "-I",
-                "/home/thefamousrat/Documents/Cpp/Easy3D/easy3d",
+                
+                "-L",
+                "/home/thefamousrat/Documents/Cpp/pmp-library/build",
 
+                "-lpmp"
             ],
             "options": {
                 "cwd": "${workspaceFolder}"
