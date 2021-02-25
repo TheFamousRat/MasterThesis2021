@@ -12,9 +12,9 @@
             "FeatureMatching": "2.0",
             "CameraInit": "3.0",
             "Texturing": "5.0",
-            "StructureFromMotion": "2.0",
             "DepthMapFilter": "3.0",
-            "DepthMap": "2.0"
+            "DepthMap": "2.0",
+            "StructureFromMotion": "2.0"
         }
     },
     "graph": {
@@ -26,11 +26,11 @@
             ],
             "parallelization": {
                 "blockSize": 0,
-                "size": 80,
+                "size": 81,
                 "split": 1
             },
             "uids": {
-                "0": "5ad5c5c7fce241fdd48a1398c1d4511ff394d3cc"
+                "0": "c3e0219c24a919b56b8a23b26592f46725fb435f"
             },
             "internalFolder": "{cache}/{nodeType}/{uid0}/",
             "inputs": {
@@ -187,6 +187,15 @@
                         "rigId": -1,
                         "subPoseId": -1,
                         "metadata": "{\"AliceVision:SensorWidth\": \"4.690000\", \"DateTime\": \"2018:10:19 15:12:53\", \"Exif:ColorSpace\": \"1\", \"Exif:DateTimeDigitized\": \"2018:10:19 15:12:53\", \"Exif:DateTimeOriginal\": \"2018:10:19 15:12:53\", \"Exif:DigitalZoomRatio\": \"1\", \"Exif:ExifVersion\": \"0220\", \"Exif:ExposureBiasValue\": \"0\", \"Exif:ExposureMode\": \"0\", \"Exif:ExposureProgram\": \"0\", \"Exif:Flash\": \"0\", \"Exif:FlashPixVersion\": \"0100\", \"Exif:FocalLength\": \"3.81\", \"Exif:LightSource\": \"255\", \"Exif:MeteringMode\": \"2\", \"Exif:PhotographicSensitivity\": \"203\", \"Exif:PixelXDimension\": \"4192\", \"Exif:PixelYDimension\": \"3104\", \"Exif:SceneCaptureType\": \"0\", \"Exif:SubsecTime\": \"99\", \"Exif:SubsecTimeDigitized\": \"99\", \"Exif:SubsecTimeOriginal\": \"99\", \"Exif:WhiteBalance\": \"0\", \"Exif:YCbCrPositioning\": \"2\", \"ExposureTime\": \"0.029999\", \"FNumber\": \"2.2\", \"GPS:ImgDirection\": \"35\", \"GPS:ImgDirectionRef\": \"M\", \"ImageDescription\": \"\", \"Make\": \"Meizu\", \"Model\": \"m1 note\", \"Orientation\": \"1\", \"ResolutionUnit\": \"none\", \"Software\": \"MediaTek Camera Application\\n\", \"XResolution\": \"72\", \"YResolution\": \"72\", \"jpeg:subsampling\": \"4:2:2\", \"oiio:ColorSpace\": \"sRGB\"}"
+                    },
+                    {
+                        "viewId": 533336107,
+                        "poseId": 533336107,
+                        "path": "/home/thefamousrat/Documents/KU Leuven/Master Thesis/MasterThesis2021/dataset_flowerpot/full_dataset/P81019-151014.jpg",
+                        "intrinsicId": 2905769803,
+                        "rigId": -1,
+                        "subPoseId": -1,
+                        "metadata": "{\"AliceVision:SensorWidth\": \"4.690000\", \"DateTime\": \"2018:10:19 15:10:14\", \"Exif:ColorSpace\": \"1\", \"Exif:DateTimeDigitized\": \"2018:10:19 15:10:14\", \"Exif:DateTimeOriginal\": \"2018:10:19 15:10:14\", \"Exif:DigitalZoomRatio\": \"1\", \"Exif:ExifVersion\": \"0220\", \"Exif:ExposureBiasValue\": \"0\", \"Exif:ExposureMode\": \"0\", \"Exif:ExposureProgram\": \"0\", \"Exif:Flash\": \"0\", \"Exif:FlashPixVersion\": \"0100\", \"Exif:FocalLength\": \"3.81\", \"Exif:LightSource\": \"255\", \"Exif:MeteringMode\": \"2\", \"Exif:PhotographicSensitivity\": \"204\", \"Exif:PixelXDimension\": \"3104\", \"Exif:PixelYDimension\": \"4192\", \"Exif:SceneCaptureType\": \"0\", \"Exif:SubsecTime\": \"20\", \"Exif:SubsecTimeDigitized\": \"20\", \"Exif:SubsecTimeOriginal\": \"20\", \"Exif:WhiteBalance\": \"0\", \"Exif:YCbCrPositioning\": \"2\", \"ExposureTime\": \"0.009996\", \"FNumber\": \"2.2\", \"GPS:ImgDirection\": \"129\", \"GPS:ImgDirectionRef\": \"M\", \"ImageDescription\": \"\", \"Make\": \"Meizu\", \"Model\": \"m1 note\", \"Orientation\": \"1\", \"ResolutionUnit\": \"none\", \"Software\": \"MediaTek Camera Application\\n\", \"XResolution\": \"72\", \"YResolution\": \"72\", \"jpeg:subsampling\": \"4:2:2\", \"oiio:ColorSpace\": \"sRGB\"}"
                     },
                     {
                         "viewId": 589943636,
@@ -802,7 +811,7 @@
                         "locked": false
                     }
                 ],
-                "sensorDatabase": "/home/thefamousrat/Downloads/Meshroom-2020.1.0/aliceVision/share/aliceVision/cameraSensors.db",
+                "sensorDatabase": "/home/thefamousrat/Documents/Meshroom-2020.1.0/aliceVision/share/aliceVision/cameraSensors.db",
                 "defaultFieldOfView": 45.0,
                 "groupCameraFallback": "folder",
                 "allowedCameraModels": [
@@ -829,11 +838,11 @@
             ],
             "parallelization": {
                 "blockSize": 40,
-                "size": 80,
-                "split": 2
+                "size": 81,
+                "split": 3
             },
             "uids": {
-                "0": "d5e7a3738010d992cb9a0026266c917fc4da319a"
+                "0": "83ef609a386e2e93b0a3e07d60271e544dcca368"
             },
             "internalFolder": "{cache}/{nodeType}/{uid0}/",
             "inputs": {
@@ -858,11 +867,11 @@
             ],
             "parallelization": {
                 "blockSize": 0,
-                "size": 80,
+                "size": 81,
                 "split": 1
             },
             "uids": {
-                "0": "5aa3e022e3c9f21d8e6c642729c64740ecef253e"
+                "0": "aaaddb0245321b3939e7d6f17d44014b5a7f14bd"
             },
             "internalFolder": "{cache}/{nodeType}/{uid0}/",
             "inputs": {
@@ -871,7 +880,7 @@
                     "{FeatureExtraction_1.output}"
                 ],
                 "method": "VocabularyTree",
-                "tree": "/home/thefamousrat/Downloads/Meshroom-2020.1.0/aliceVision/share/aliceVision/vlfeat_K80L3.SIFT.tree",
+                "tree": "/home/thefamousrat/Documents/Meshroom-2020.1.0/aliceVision/share/aliceVision/vlfeat_K80L3.SIFT.tree",
                 "weights": "",
                 "minNbImages": 200,
                 "maxDescriptors": 500,
@@ -891,11 +900,11 @@
             ],
             "parallelization": {
                 "blockSize": 20,
-                "size": 80,
-                "split": 4
+                "size": 81,
+                "split": 5
             },
             "uids": {
-                "0": "bae66a9f9c6eee0ab348bd422b1a42d9d58435b6"
+                "0": "bf0d244468773249a7da497cc70fc8f179ec4089"
             },
             "internalFolder": "{cache}/{nodeType}/{uid0}/",
             "inputs": {
@@ -931,11 +940,11 @@
             ],
             "parallelization": {
                 "blockSize": 0,
-                "size": 80,
+                "size": 81,
                 "split": 1
             },
             "uids": {
-                "0": "4e7daaf65d2168b45652ecb431979d4f4ec17868"
+                "0": "1960f3739f6c6343221afe6a90992d197272e4eb"
             },
             "internalFolder": "{cache}/{nodeType}/{uid0}/",
             "inputs": {
@@ -986,11 +995,11 @@
             ],
             "parallelization": {
                 "blockSize": 40,
-                "size": 80,
-                "split": 2
+                "size": 81,
+                "split": 3
             },
             "uids": {
-                "0": "f4bc049f95c8e0e76d57a5b1ad2f504703a56968"
+                "0": "ff117a6c3a0b25ed62b9747e419b31770ac48b66"
             },
             "internalFolder": "{cache}/{nodeType}/{uid0}/",
             "inputs": {
@@ -1015,11 +1024,11 @@
             ],
             "parallelization": {
                 "blockSize": 3,
-                "size": 80,
+                "size": 81,
                 "split": 27
             },
             "uids": {
-                "0": "5656b2355d3396084967311eca74c42e243d70de"
+                "0": "45291c4623ef271d476058a8f85eed5d3e521634"
             },
             "internalFolder": "{cache}/{nodeType}/{uid0}/",
             "inputs": {
@@ -1057,11 +1066,11 @@
             ],
             "parallelization": {
                 "blockSize": 10,
-                "size": 80,
-                "split": 8
+                "size": 81,
+                "split": 9
             },
             "uids": {
-                "0": "b16950353af05e6ab749b37317b82ba389f3024b"
+                "0": "b7265233d8342dd2b7080a4cc7e549a199565713"
             },
             "internalFolder": "{cache}/{nodeType}/{uid0}/",
             "inputs": {
@@ -1093,7 +1102,7 @@
                 "split": 1
             },
             "uids": {
-                "0": "4d614643cfd542efd5165635752f285dba3449c5"
+                "0": "0778a278d0fafef36cd14c7677cdc9a0e9eeceea"
             },
             "internalFolder": "{cache}/{nodeType}/{uid0}/",
             "inputs": {
@@ -1158,7 +1167,7 @@
                 "split": 1
             },
             "uids": {
-                "0": "ac023a27f374a17dbdea6162054b42a465cfface"
+                "0": "4a6d593a4128984cff919b8125c2785c6d48715a"
             },
             "internalFolder": "{cache}/{nodeType}/{uid0}/",
             "inputs": {
@@ -1185,14 +1194,14 @@
                 "split": 1
             },
             "uids": {
-                "0": "cf5bf7bdd71d153f45e4003aa1eb556e6db5160e"
+                "0": "03c8f37131df3623eff5f0468f98a6e68b6917e9"
             },
             "internalFolder": "{cache}/{nodeType}/{uid0}/",
             "inputs": {
                 "input": "{Meshing_1.output}",
                 "imagesFolder": "{DepthMap_1.imagesFolder}",
                 "inputMesh": "{MeshFiltering_1.outputMesh}",
-                "textureSide": 8192,
+                "textureSide": 4096,
                 "downscale": 2,
                 "outputTextureFileType": "png",
                 "unwrapMethod": "Basic",
