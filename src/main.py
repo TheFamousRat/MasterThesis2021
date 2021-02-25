@@ -28,15 +28,16 @@ def getDihedralAngle(meshEditorObj, v0, v1):
 
     #Sanity check
     if len(adjFaces) != 2:
-        raise(Exception("Error : edge doesn't have 2 neighbouring faces"))
+        return 0.0
+        #raise(Exception("Error : edge doesn't have 2 neighbouring faces"))
 
     n0 = getFaceNormal(meshEditorObj, adjFaces[0])
     n1 = getFaceNormal(meshEditorObj, adjFaces[1])
     
     return math.acos(np.dot(n0, n1) / (np.linalg.norm(n0) * np.linalg.norm(n1)))
 
-def getVertexEnergy(meshEditorObj, vertexIdx, alpha, vertexPosition = None):
-    if vertexPosition == None:
+def getVertexPositionEnergy(meshEditorObj, vertexIdx, alpha, vertexPosition = None):
+    if vertexPosition is None:
         vertexPosition = meshEditorObj.proposedVerticesPos[vertexIdx]
 
     #Computing the neighbourhood energy, by adding the energy of all cliques
@@ -54,15 +55,51 @@ def getVertexEnergy(meshEditorObj, vertexIdx, alpha, vertexPosition = None):
 
 def getNewPositionProbabilityRatio(meshEditorObj, vertexIdx, proposedPosition, alpha, temperature):
     #We first get the energy of the current proposed position
-    currentPositionEnergy = getVertexEnergy(meshEditorObj, vertexIdx, alpha)
+    currentPositionEnergy = getVertexPositionEnergy(meshEditorObj, vertexIdx, alpha)
 
     #We then get the energy of the proposed position
-    proposedPositionEnergy = getVertexEnergy(meshEditorObj, vertexIdx, alpha, proposedPosition)
+    proposedPositionEnergy = getVertexPositionEnergy(meshEditorObj, vertexIdx, alpha, proposedPosition)
 
     return math.exp((currentPositionEnergy - proposedPositionEnergy)/temperature)
 
-def proposeVertexPosition(meshEditorObj, vertexIdx):
-    pass
+def proposeVertexPosition(meshEditorObj, vertexIdx, deviation):
+    #We first compute all the dihedral angles for each edge formed with an adjacent vertex
+    dihedralAngles = {}
+    for neighbourVertexIdx in meshEditorObj.baseMesh.get_vertex_adjacent_vertices(vertexIdx):
+        dihedralAngles[neighbourVertexIdx] = getDihedralAngle(meshEditorObj, vertexIdx, neighbourVertexIdx)
 
-meshEditor = MeshEditor("data/texturedMesh.obj")
-print(getNewPositionProbabilityRatio(meshEditor, 0, [0,0,0], 1.0, 1.0))
+    summedFaceAngles = 0.0
+    summedWeightedNormals = 0.0
+    for faceIdx in meshEditorObj.baseMesh.get_vertex_adjacent_faces(vertexIdx):
+        faceVertices = (meshEditorObj.baseMesh.faces[faceIdx]).tolist()
+        vertexFaceIdx = faceVertices.index(vertexIdx)
+        v1Idx = faceVertices[(vertexFaceIdx+1)%3]
+        v2Idx = faceVertices[(vertexFaceIdx+2)%3]
+
+        faceAngle = (dihedralAngles[v1Idx] + dihedralAngles[v2Idx]) / 2.0
+        faceNormal = np.array(getFaceNormal(meshEditorObj, faceIdx))
+
+        summedFaceAngles += faceAngle
+        summedWeightedNormals += faceAngle * faceNormal * np.random.normal(0.0, deviation)
+
+    return meshEditorObj.proposedVerticesPos[vertexIdx] + (summedWeightedNormals/summedFaceAngles)
+
+filepath = "data/texturedMesh.obj"
+print("Mesh loading at path {}...".format(filepath))
+meshEditor = MeshEditor(filepath)
+print("Done")
+
+iterationsAmount = 1
+allVerticesIndices = list(range(0, len(meshEditor.baseMesh.vertices)))
+for i in range(0,iterationsAmount): 
+    random.shuffle(allVerticesIndices)
+    print("Iteration {} out of {}...".format(i+1, iterationsAmount))
+    for vIdx in allVerticesIndices:
+        proposedPos = proposeVertexPosition(meshEditor, vIdx, 1.0)
+        energyRatio = getNewPositionProbabilityRatio(meshEditor, vIdx, proposedPos, 0.1, 1.0)
+        u = np.random.uniform(0.0, 1.0)
+        if u <= energyRatio:
+            meshEditor.setProposedVertexPos(vIdx, proposedPos)
+
+print(meshEditor.baseMesh.vertices[0])
+print(proposeVertexPosition(meshEditor, 0, 1.0))
