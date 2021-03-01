@@ -37,4 +37,17 @@ bm = bmesh.new()
 bm.from_mesh(currentObject.data)
 bm.faces.ensure_lookup_table()
 
-print(faceUtils.getFacePixels(currentObject, bm, bm.faces[0]))
+imagesPixels = {}
+
+#Loop will start here...
+face = bm.faces[2]
+faceImage = faceUtils.getFaceImage(currentObject, face)
+if not faceImage in imagesPixels:
+    imagesPixels[faceImage] = faceImage.pixels[:]
+facePixelCoords = faceUtils.getFacePixels(currentObject, bm, face)
+pixelColors = [basicUtils.getImagePixelColor_HS(imagesPixels[faceImage], faceImage.size[0], int(pixelCoords[0]), int(pixelCoords[1])) for pixelCoords in facePixelCoords]
+
+ret = str(pixelColors).replace('[', 'c(').replace(']', ')')
+
+    
+print(ret)
