@@ -37,17 +37,38 @@ bm = bmesh.new()
 bm.from_mesh(currentObject.data)
 bm.faces.ensure_lookup_table()
 
-imagesPixels = {}
+face = bm.faces[0]
+img = faceUtils.getFaceImage(currentObject, face)
+
 
 #Loop will start here...
-face = bm.faces[2]
-faceImage = faceUtils.getFaceImage(currentObject, face)
-if not faceImage in imagesPixels:
-    imagesPixels[faceImage] = faceImage.pixels[:]
-facePixelCoords = faceUtils.getFacePixels(currentObject, bm, face)
-pixelColors = [basicUtils.getImagePixelColor_HS(imagesPixels[faceImage], faceImage.size[0], int(pixelCoords[0]), int(pixelCoords[1])) for pixelCoords in facePixelCoords]
+fileStr = "H,S,faceIdx\n"
+file = open("facePixels.csv", "w")   
+file.write("")
+file.close()
 
-ret = str(pixelColors).replace('[', 'c(').replace(']', ')')
+file = open("facePixels.csv", "a")    
 
+cachedImgPixels = {}
+for faceIndex in range(0,10000,100):
+    print(faceIndex)
+    face = bm.faces[faceIndex]
+    faceImage = faceUtils.getFaceImage(currentObject, face)
     
-print(ret)
+    if not faceImage.name in cachedImgPixels:
+        cachedImgPixels[faceImage.name] = faceImage.pixels[:]
+        
+    facePixelCoords = faceUtils.getFacePixels(currentObject, bm, face)
+    pixelColors = [basicUtils.getImagePixelColor_HS(cachedImgPixels[faceImage.name], faceImage.size[0], int(pixelCoords[0]), int(pixelCoords[1])) for pixelCoords in facePixelCoords]
+    
+    for pixelColor in pixelColors:
+        for colorComp in pixelColor:
+            fileStr += str(colorComp)
+            fileStr += ","
+        fileStr += str(faceIndex) 
+        fileStr += '\n'
+    
+    file.write(fileStr)
+    fileStr = ""
+
+file.close()

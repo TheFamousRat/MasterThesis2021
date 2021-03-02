@@ -1,3 +1,5 @@
+import bpy
+
 def RGBtoHSV(R,G,B):
 	# min, max, delta;
 	min_rgb = min( R, G, B )
@@ -42,7 +44,7 @@ def getImagePixelColor_RGB(imPixels, width, x, y):
 	:type x: int
 	:param y: Pixel Y-coordinate
 	:type y: int
-	:returns: 4-sized list representing RGBA pixel structure ([R, G, B, A])
+	:returns: 4-sized list representing HSV pixel structure ([R, G, B, A])
 	:rtype: list
 	"""
 	pixelIdx = ( y * width + x ) * 4
@@ -64,7 +66,7 @@ def getImagePixelColor_HSV(imPixels, width, x, y):
 	:type x: int
 	:param y: Pixel Y-coordinate
 	:type y: int
-	:returns: 3-sized list representing RGBA pixel structure ([H, S, V])
+	:returns: 3-sized list representing HSV pixel structure ([H, S, V])
 	:rtype: list
 	"""
 	pixelIdx = ( y * width + x ) * 4
@@ -82,10 +84,22 @@ def getImagePixelColor_HS(imPixels, width, x, y):
 	:type x: int
 	:param y: Pixel Y-coordinate
 	:type y: int
-	:returns: 2-sized list representing RGBA pixel structure ([H, S])
+	:returns: 2-sized list representing HSV pixel structure ([H, S])
 	:rtype: list
 	"""
 	pixelIdx = ( y * width + x ) * 4
 
 	H, S, V = RGBtoHSV(imPixels[pixelIdx], imPixels[pixelIdx + 1], imPixels[pixelIdx + 2])
 	return [H,S]
+
+def cacheImagePixels(imageName):
+	"""
+	'Corrects' Blender's native way of storing image pixels, by transforming them into regular pixels lists
+	:param imageName: Name of the image as can be found in bpy.data.images
+	:type imageName: str
+	"""
+	img = bpy.data.images[imageName]
+
+	pixels = img.pixels[:] 
+	img.pixels[:] = pixels
+	img.update()
