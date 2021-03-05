@@ -37,52 +37,6 @@ def RGBtoHSV(R,G,B):
 	
 	return H,S,V
 
-def getImagePixelColor_RGB(img, x, y):
-	"""
-	:param img: List of pixels of the image texture from which to find the pixel
-	:type img: PIL.Image
-	:param x: Pixel X-coordinate
-	:type x: int
-	:param y: Pixel Y-coordinate
-	:type y: int
-	:returns: 3-sized list representing RGB pixel structure ([R, G, B])
-	:rtype: list
-	"""
-
-	return img.getpixel((x,y))
-    
-def getImagePixelColor_HSV(img, x, y):
-	"""
-	:param img: List of pixels of the image texture from which to find the pixel
-	:type img: PIL.Image
-	:param x: Pixel X-coordinate
-	:type x: int
-	:param y: Pixel Y-coordinate
-	:type y: int
-	:returns: 3-sized list representing HSV pixel structure ([H, S, V])
-	:rtype: list
-	"""
-	RGB = img.getpixel((x,y))
-
-	H, S, V = RGBtoHSV(RGB[0], RGB[1], RGB[2])
-	return [H,S,V]
-
-def getImagePixelColor_HS(img, x, y):
-	"""
-	:param img: List of pixels of the image texture from which to find the pixel
-	:type img: PIL.Image
-	:param x: Pixel X-coordinate
-	:type x: int
-	:param y: Pixel Y-coordinate
-	:type y: int
-	:returns: 2-sized list representing HSV pixel structure ([H, S])
-	:rtype: list
-	"""
-	RGB = img.getpixel((x,y))
-
-	H, S, V = RGBtoHSV(RGB[0], RGB[1], RGB[2])
-	return [H,S]
-
 def colHSVDist(col1, col2):
 	"""
 	Calculates the distance between two colors in the HSV space

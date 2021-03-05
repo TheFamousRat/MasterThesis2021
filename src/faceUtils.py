@@ -50,7 +50,7 @@ def getFacePixels(bm, face, img):
 		uvCoords = loop[uvLayer].uv
 		uvCoordsNorm = [math.fmod(uvCoords[0], 1.0), math.fmod(uvCoords[1], 1.0)]
 		loopPixelCoords.append(np.array([math.floor(uvCoordsNorm[0] * img.size[0]), math.floor(uvCoordsNorm[1] * img.size[1])]))
-
+	
 	#Using a scan-line algorithm to "rasterize" the triangle to a pixel grid, whose coordinates we save and return
 	d0 = loopPixelCoords[1] - loopPixelCoords[0]
 	d1 = loopPixelCoords[2] - loopPixelCoords[1]
@@ -85,7 +85,12 @@ def getFacePixelColors(bm, face, img):
 	For a given face and its given texture, returns the array of pixels colors it covers
 	"""
 	facePixelsCoords = getFacePixels(bm, face, img)
-	return [np.array(img.getpixel( (int(pixelCoords[0]), int(pixelCoords[1])) )) / 255.0 for pixelCoords in facePixelsCoords]
+	ret = []
+	for pixelCoords in facePixelsCoords:
+		pixelUnnormed = np.array( img.getpixel( (int(pixelCoords[0]), img.size[1] - int(pixelCoords[1])) ) ) / 255.0 
+		ret.append(pixelUnnormed.tolist())
+	print(facePixelsCoords)
+	return ret
 
 def getFacePixelsDistance(bm, face1, face2, imagesCache):
 	"""
