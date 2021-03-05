@@ -1,4 +1,5 @@
 import bpy
+import math
 
 def RGBtoHSV(R,G,B):
 	# min, max, delta;
@@ -32,36 +33,28 @@ def RGBtoHSV(R,G,B):
 	if H < 0:
 		H += 360
 
+	H = H * (math.pi / 180.0)
+	
 	return H,S,V
 
-def getImagePixelColor_RGB(imPixels, width, x, y):
+def getImagePixelColor_RGB(img, x, y):
 	"""
-	:param im: List of pixels of the image texture from which to find the pixel
-	:type im: list
-	:param width: Width of the image
-	:type width: int
+	:param img: List of pixels of the image texture from which to find the pixel
+	:type img: PIL.Image
 	:param x: Pixel X-coordinate
 	:type x: int
 	:param y: Pixel Y-coordinate
 	:type y: int
-	:returns: 4-sized list representing HSV pixel structure ([R, G, B, A])
+	:returns: 3-sized list representing RGB pixel structure ([R, G, B])
 	:rtype: list
 	"""
-	pixelIdx = ( y * width + x ) * 4
 
-	return [
-	imPixels[pixelIdx], # RED
-	imPixels[pixelIdx + 1], # GREEN
-	imPixels[pixelIdx + 2], # BLUE
-	imPixels[pixelIdx + 3] # ALPHA
-	]
+	return img.getpixel((x,y))
     
-def getImagePixelColor_HSV(imPixels, width, x, y):
+def getImagePixelColor_HSV(img, x, y):
 	"""
-	:param im: List of pixels of the image texture from which to find the pixel
-	:type im: list
-	:param width: Width of the image
-	:type width: int
+	:param img: List of pixels of the image texture from which to find the pixel
+	:type img: PIL.Image
 	:param x: Pixel X-coordinate
 	:type x: int
 	:param y: Pixel Y-coordinate
@@ -69,17 +62,15 @@ def getImagePixelColor_HSV(imPixels, width, x, y):
 	:returns: 3-sized list representing HSV pixel structure ([H, S, V])
 	:rtype: list
 	"""
-	pixelIdx = ( y * width + x ) * 4
+	RGB = img.getpixel((x,y))
 
-	H, S, V = RGBtoHSV(imPixels[pixelIdx], imPixels[pixelIdx + 1], imPixels[pixelIdx + 2])
+	H, S, V = RGBtoHSV(RGB[0], RGB[1], RGB[2])
 	return [H,S,V]
 
-def getImagePixelColor_HS(imPixels, width, x, y):
+def getImagePixelColor_HS(img, x, y):
 	"""
-	:param im: List of pixels of the image texture from which to find the pixel
-	:type im: list
-	:param width: Width of the image
-	:type width: int
+	:param img: List of pixels of the image texture from which to find the pixel
+	:type img: PIL.Image
 	:param x: Pixel X-coordinate
 	:type x: int
 	:param y: Pixel Y-coordinate
@@ -87,19 +78,17 @@ def getImagePixelColor_HS(imPixels, width, x, y):
 	:returns: 2-sized list representing HSV pixel structure ([H, S])
 	:rtype: list
 	"""
-	pixelIdx = ( y * width + x ) * 4
+	RGB = img.getpixel((x,y))
 
-	H, S, V = RGBtoHSV(imPixels[pixelIdx], imPixels[pixelIdx + 1], imPixels[pixelIdx + 2])
+	H, S, V = RGBtoHSV(RGB[0], RGB[1], RGB[2])
 	return [H,S]
 
-def cacheImagePixels(imageName):
+def colHSVDist(col1, col2):
 	"""
-	'Corrects' Blender's native way of storing image pixels, by transforming them into regular pixels lists
-	:param imageName: Name of the image as can be found in bpy.data.images
-	:type imageName: str
+	Calculates the distance between two colors in the HSV space
+	:param col1: First HSV color
+	:type col1: list
+	:param col2: Second HSV color
+	:type col2: list
 	"""
-	img = bpy.data.images[imageName]
-
-	pixels = img.pixels[:] 
-	img.pixels[:] = pixels
-	img.update()
+	return math.pow((math.cos(col1[0]) * col1[1]) - (math.cos(col2[0]) * col2[1]), 2.0) + math.pow((math.sin(col1[0]) * col1[1]) - (math.sin(col2[0]) * col2[1]), 2.0)
