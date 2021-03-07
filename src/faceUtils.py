@@ -7,6 +7,9 @@ from scipy.optimize import linear_sum_assignment
 
 import basicUtils
 
+INV_255 = 1.0/255.0
+PI_TIMES_2 = 2.0 * math.pi
+ 
 def getFaceAdjacentFaces(face):
 	"""
 	Returns an array of faces representing the indices of faces neighbouring face
@@ -31,7 +34,7 @@ def getFaceImage(ob, face):
 def getFaceImageName(ob, face):
 	return getFaceImage(ob, face).name
 
-def getFacePixels(bm, face, img):
+def getFacePixels(bm, face, img, stepSize = 1.0):
 	"""Find a face's shader texture, and returns a list of its corresponding pixels coordinates (from UV)
 
 	:param ob: The original object
@@ -40,6 +43,8 @@ def getFacePixels(bm, face, img):
 	:type bm: bmesh
 	:param face: The face's BMFace object
 	:type face: BMFace
+	:param stepSize: Step size for the scan line algorithm. Must be between 0 and 1. Smaller values (closer to 0) yield better results, but are slower 
+	:type stepSize: float
 	:returns: a list of pixel coordinates
 	:rtype: list
 	"""
@@ -48,7 +53,7 @@ def getFacePixels(bm, face, img):
 	for loop in face.loops:
 		#Transforming the triangle's uv coords into pixel coords
 		uvCoords = loop[uvLayer].uv
-		uvCoordsNorm = [math.fmod(uvCoords[0], 1.0), math.fmod(uvCoords[1], 1.0)]
+		uvCoordsNorm = [math.fmod(uvCoords[0], 1.0), 1.0 - math.fmod(uvCoords[1], 1.0)] #inverting the y-axis to go from UV space to pixel space
 		loopPixelCoords.append(np.array([math.floor(uvCoordsNorm[0] * img.size[0]), math.floor(uvCoordsNorm[1] * img.size[1])]))
 	
 	#Using a scan-line algorithm to "rasterize" the triangle to a pixel grid, whose coordinates we save and return
@@ -64,7 +69,6 @@ def getFacePixels(bm, face, img):
 	d0SizeRatio = d0NewLen/d0BaseLen
 	d1SizeRatio = d1NewLen/d1BaseLen
 
-	stepSize = 0.5 #Smaller yields better results, but is slower (0.5 seems generally reliable)
 	alpha = 0.0
 	beta = 0.0
 	facePixelsCoords = []
@@ -85,25 +89,17 @@ def getFacePixelColors(bm, face, img):
 	For a given face and its given texture, returns the array of pixels colors it covers
 	"""
 	facePixelsCoords = getFacePixels(bm, face, img)
-	ret = []
-	for pixelCoords in facePixelsCoords:
-		pixelUnnormed = np.array( img.getpixel( (int(pixelCoords[0]), img.size[1] - int(pixelCoords[1])) ) ) / 255.0 
-		ret.append(pixelUnnormed.tolist())
-	print(facePixelsCoords)
-	return ret
+	return [img.getpixel( (int(pixelCoords[0]), int(pixelCoords[1])) ) for pixelCoords in facePixelsCoords]
 
-def getFacePixelsDistance(bm, face1, face2, imagesCache):
+
+def getFacePixelsDistance(face1PixelColors, face2PixelColors):
 	"""
 	Computes and returns the Earth Mover Distance between the pixels of both faces
-	:param bm: The face's corresponding bmesh
-	:type bm: bmesh
-	:param face1: Face object for the first face
-	:type face1: BMFace
-	:param face2: Face object for the second face
-	:type face2: BMFace
+	:param face1PixelColors: The pixels of the first face
+	:type face1PixelColors: list
+	:param face2PixelColors: The pixels of the second face
+	:type face2PixelColors: list
 	"""
-	face1PixelColors = getFacePixelColors(bm, face1, imagesCache[face1.material_index])
-	face2PixelColors = getFacePixelColors(bm, face2, imagesCache[face2.material_index])
 
 	Cmat = cdist(face1PixelColors, face2PixelColors, basicUtils.colHSVDist)
 	assignment = linear_sum_assignment(Cmat)

@@ -19,6 +19,9 @@ col2 <- cos(faceColorData$H) * faceColorData$S
 projectedColorData <- as.data.frame(cbind(col1, col2, faceColorData$faceIdx))
 colnames(projectedColorData) <- c("proj1", "proj2", "faceIdx")
 
-plot(NULL, xlim = c(-1,1), ylim = c(-1,1), xlab = "Xproj", ylab = "Yproj")
-plotFaceColorData(projectedColorData, 0)
-plotFaceColorData(projectedColorData, 100)
+plot(NULL, xlim = c(-0.4,0.4), ylim = c(-0.5,0.5), xlab = "Xproj", ylab = "Yproj")
+abline(a = 0, b = 0)
+lines(c(0,0),c(-10000,10000))
+
+plotFaceColorData(projectedColorData, 5)
+plotFaceColorData(projectedColorData, 90)
