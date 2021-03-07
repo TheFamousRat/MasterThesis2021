@@ -1,9 +1,15 @@
-import bpy
-import bmesh
 import math
+import time
+import threading
+import sys
+import pickle
+
 import numpy as np
 from scipy.spatial.distance import cdist
 from scipy.optimize import linear_sum_assignment
+
+import bpy
+import bmesh
 
 import basicUtils
 
@@ -61,6 +67,10 @@ def getFacePixels(bm, face, img, stepSize = 1.0):
 	d1 = loopPixelCoords[2] - loopPixelCoords[1]
 	d0BaseLen = np.linalg.norm(d0)
 	d1BaseLen = np.linalg.norm(d1)
+
+	if not ((d0BaseLen > 0.0) and (d1BaseLen > 0.0)):
+		return []
+	
 	maxLength = max(d0BaseLen, d1BaseLen)
 	d0 = d0/maxLength
 	d1 = d1/maxLength
@@ -91,7 +101,6 @@ def getFacePixelColors(bm, face, img):
 	facePixelsCoords = getFacePixels(bm, face, img)
 	return [img.getpixel( (int(pixelCoords[0]), int(pixelCoords[1])) ) for pixelCoords in facePixelsCoords]
 
-
 def getFacePixelsDistance(face1PixelColors, face2PixelColors):
 	"""
 	Computes and returns the Earth Mover Distance between the pixels of both faces
@@ -104,3 +113,90 @@ def getFacePixelsDistance(face1PixelColors, face2PixelColors):
 	Cmat = cdist(face1PixelColors, face2PixelColors, basicUtils.colHSVDist)
 	assignment = linear_sum_assignment(Cmat)
 	return (Cmat[assignment].sum() / len(Cmat[assignment]))
+
+def getFaceCSVstr(bm, face, imagesCache):
+    ret = ""
+    
+    pixels = getFacePixelColors(bm, face, imagesCache[face.material_index])
+    for pixel in pixels:
+        ret += str(pixel[0]) + "," + str(pixel[1]) + "," + str(face.index) + "\n"
+    return ret
+
+def bakePixelsArray(bm, idxArray, bakedPixels, threadIdx, threadsProgressList, cachedMatImages):
+    for i in range(len(idxArray)):
+        faceIdx = idxArray[i]
+        face = bm.faces[faceIdx]
+        pixels = getFacePixelColors(bm, face, cachedMatImages[face.material_index])
+        bakedPixels[faceIdx] = [pixel[pxId] for pixel in pixels for pxId in range(2)]
+        
+        threadsProgressList[threadIdx] = i
+
+def giveThreadsState(threadsList, threadsProgressList, threadsWorkSize):
+    start = time.time()
+    
+    while True:
+
+        aliveThreadsCount = 0
+        maxTimeRemaining = 0.0
+        threadsReportStr = ""
+
+        for i in range(len(threadsList) - 1):
+
+            timeElapsed = time.time() - start
+            thread = threadsList[i]
+            threadsReportStr += "Thread {} : ".format(i)
+
+            if thread.is_alive():
+
+                aliveThreadsCount += 1
+                workProgress = float(threadsProgressList[i] + 1) / float(threadsWorkSize[i])
+                threadsReportStr += str( 100.0 * workProgress ) + " %"
+
+                threadTimeRemaing = timeElapsed * ((1.0 / workProgress) - 1.0)
+                maxTimeRemaining = max(maxTimeRemaining, threadTimeRemaing)
+            else:
+
+                threadsReportStr += "Done."
+            
+            threadsReportStr += '\n'
+
+        threadsReportStr += 'Remaining time : {} s\n'.format(maxTimeRemaining)
+        sys.stdout.write(threadsReportStr)
+
+        if aliveThreadsCount == 0:
+            break
+        else:
+            time.sleep(0.5)
+        
+
+def bakeFacePixels(bm, fileName, cachedMatImages, threadsAmount = 4):
+    bakedPixels = {}
+    facesCount = len(bm.faces)
+    
+    arrayLimits = list(range(0,facesCount, int(facesCount/threadsAmount)))
+    if not ((facesCount - 1) in arrayLimits):
+        arrayLimits.append(facesCount)
+
+    threads = []
+    threadsProgressList = [0 for i in range(threadsAmount)]
+    threadsWorkSize = []
+    for i in range(threadsAmount):
+        #Creating the new thread
+        workedIndex = list(range(arrayLimits[i], arrayLimits[i+1]))
+        newThread = threading.Thread(target=bakePixelsArray, args=(bm, workedIndex, bakedPixels, i, threadsProgressList, cachedMatImages,))
+        threads.append(newThread)
+        newThread.start()
+        #Gathering information for the updater
+        threadsWorkSize.append(len(workedIndex))
+        
+    #Creating a thread to follow the thread's progress
+    updaterThread = threading.Thread(target=giveThreadsState, args=(threads, threadsProgressList, threadsWorkSize,))
+    updaterThread.start()
+    threads.append(updaterThread)
+    print(len(threads))
+    for t in threads:
+        t.join()
+    
+    #Emptying the file before writing
+    with open(fileName, 'wb') as f:
+        pickle.dump(bakedPixels, f)
