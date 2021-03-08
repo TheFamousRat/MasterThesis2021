@@ -122,14 +122,26 @@ def getFaceCSVstr(bm, face, imagesCache):
         ret += str(pixel[0]) + "," + str(pixel[1]) + "," + str(face.index) + "\n"
     return ret
 
-def bakePixelsArray(bm, idxArray, bakedPixels, threadIdx, threadsProgressList, cachedMatImages):
+def bakeFacesArrayInfo(bm, idxArray, bakedFacesInfo, threadIdx, threadsProgressList, infoFunc, infoFuncParams):
     for i in range(len(idxArray)):
         faceIdx = idxArray[i]
-        face = bm.faces[faceIdx]
-        pixels = getFacePixelColors(bm, face, cachedMatImages[face.material_index])
-        bakedPixels[faceIdx] = [pixel[pxId] for pixel in pixels for pxId in range(2)]
+        bakedFacesInfo[faceIdx] = infoFunc(bm, bm.faces[faceIdx], *infoFuncParams)
         
         threadsProgressList[threadIdx] = i
+
+def bakeFacePixelsColors(bm, face, cachedMatImages):
+	"""
+	Returns the pixels of the a face as serialized list
+	"""
+	pixels = getFacePixelColors(bm, face, cachedMatImages[face.material_index])
+	return [pixel[pxId] for pixel in pixels for pxId in range(2)]
+
+def bakeFacePixelsColorsStatistics(bm, face, bakedPixelsColors):
+	"""
+	Returns the pixels of the a face as serialized list
+	"""
+	pixels = normalizeCompressedPixels(bakedPixelsColors[face.index], 'HS')
+	return computeFaceColorCharacteristics(pixels)
 
 def giveThreadsState(threadsList, threadsProgressList, threadsWorkSize):
     start = time.time()
@@ -169,34 +181,88 @@ def giveThreadsState(threadsList, threadsProgressList, threadsWorkSize):
             time.sleep(0.5)
         
 
-def bakeFacePixels(bm, fileName, cachedMatImages, threadsAmount = 4):
-    bakedPixels = {}
-    facesCount = len(bm.faces)
-    
-    arrayLimits = list(range(0,facesCount, int(facesCount/threadsAmount)))
-    if not ((facesCount - 1) in arrayLimits):
-        arrayLimits.append(facesCount)
+def bakeFacePixels(bm, fileName, threadsAmount, cachedImages):
+	bakeFacesInfo(bm, fileName, threadsAmount, bakeFacePixelsColors, (cachedImages,))
 
-    threads = []
-    threadsProgressList = [0 for i in range(threadsAmount)]
-    threadsWorkSize = []
-    for i in range(threadsAmount):
-        #Creating the new thread
-        workedIndex = list(range(arrayLimits[i], arrayLimits[i+1]))
-        newThread = threading.Thread(target=bakePixelsArray, args=(bm, workedIndex, bakedPixels, i, threadsProgressList, cachedMatImages,))
-        threads.append(newThread)
-        newThread.start()
-        #Gathering information for the updater
-        threadsWorkSize.append(len(workedIndex))
-        
-    #Creating a thread to follow the thread's progress
-    updaterThread = threading.Thread(target=giveThreadsState, args=(threads, threadsProgressList, threadsWorkSize,))
-    updaterThread.start()
-    threads.append(updaterThread)
-    print(len(threads))
-    for t in threads:
-        t.join()
-    
-    #Emptying the file before writing
-    with open(fileName, 'wb') as f:
-        pickle.dump(bakedPixels, f)
+def bakeFacePixelsStatistics(bm, fileName, threadsAmount, bakedPixels):
+	bakeFacesInfo(bm, fileName, threadsAmount, bakeFacePixelsColorsStatistics, (bakedPixels,))
+
+def bakeFacesInfo(bm, fileName, threadsAmount, infoFunc, infoFuncParams):
+	"""
+	Multi-threaded process to bake info relating to a faces of the mesh to a binary file
+	:param bm: BMesh of the object
+	:type bm: BMesh
+	:param fileName: Path of the binary file to dump the pixels to
+	:type fileName: str
+	:param cachedMatImages: List of images cached from material's textures
+	:type cachedMatImages: list
+	:param threadsAmount: Number of threads
+	:type threadsAmount: int
+	"""
+	bakedFacesInfo = {}
+	facesCount = len(bm.faces)
+
+	arrayLimits = list(range(0,facesCount, int(facesCount/threadsAmount)))
+	if not ((facesCount - 1) in arrayLimits):
+		arrayLimits.append(facesCount)
+
+	threads = []
+	threadsProgressList = [0 for i in range(threadsAmount)]
+	threadsWorkSize = []
+	for i in range(threadsAmount):
+		#Creating the new thread
+		workedIndex = list(range(arrayLimits[i], arrayLimits[i+1]))
+		newThread = threading.Thread(target=bakeFacesArrayInfo, args=(bm, workedIndex, bakedFacesInfo, i, threadsProgressList, infoFunc, infoFuncParams,))
+		threads.append(newThread)
+		newThread.start()
+		#Gathering information for the updater
+		threadsWorkSize.append(len(workedIndex))
+		
+	#Creating a thread to follow the thread's progress
+	updaterThread = threading.Thread(target=giveThreadsState, args=(threads, threadsProgressList, threadsWorkSize,))
+	threads.append(updaterThread)
+	updaterThread.start()
+
+	for t in threads:
+		t.join()
+
+	#Emptying the file before writing
+	with open(fileName, 'wb') as f:
+		pickle.dump(bakedFacesInfo, f)
+
+def readCompressedPixels(compPixels, colorDim):
+    return [[compPixels[pixelIdxStart+i] for i in range(colorDim)] for pixelIdxStart in range(0, len(compPixels), colorDim)]
+
+def normalizeCompressedPixels(compPixels, colorSpace):
+	"""
+	From an array of compressed pixels, (so just plain list, not a list of lists), returns the decompressed and normalized form of the colors
+	"""
+	colorsDims = 3
+	normalizer = np.array([1.0,1.0,1.0])
+	if colorSpace == "HS":
+		colorsDims = 2
+		normalizer = np.array([PI_TIMES_2 * INV_255, INV_255])
+	elif colorSpace == "HSV":
+		colorsDims = 3
+		normalizer = np.array([PI_TIMES_2 * INV_255, INV_255, INV_255])
+	elif colorSpace == "RGB":
+		colorsDims = 3
+		normalizer = np.array([INV_255, INV_255, INV_255])
+	
+	decompressedPixels = readCompressedPixels(compPixels, colorsDims)
+	return [np.multiply(np.array(pixel), normalizer).tolist() for pixel in decompressedPixels]
+
+def computeFaceColorCharacteristics(pixelColors):
+	ret = {}
+	#1/Project the colors to the color cone, a space where the distance between colors can be the euclidean one
+	projectedFacePixels = []
+	for pixelCol in pixelColors:
+		projectedFacePixels.append([math.cos(pixelCol[0]) * pixelCol[1], math.sin(pixelCol[0]) * pixelCol[1]])
+	projectedFacePixels = np.array(projectedFacePixels)
+
+	#2/Calculate the centroid of the projected point cloud (meanA = a.mean(0))
+	ret["mean"] = projectedFacePixels.mean(0)
+	#3/Calculate the inertia of the point cloud (np.sum(np.array(cdist(a, np.array([meanA.tolist()])))))
+	ret["inertia"] = np.sum(np.array(cdist(projectedFacePixels, np.array([ret["mean"].tolist()]))))
+
+	return ret 

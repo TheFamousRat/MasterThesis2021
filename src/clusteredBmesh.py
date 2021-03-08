@@ -1,3 +1,7 @@
+import threading
+import time
+import sys
+
 import bpy
 import bmesh
 import random
@@ -13,6 +17,8 @@ class ClusteredBMesh:
         self.clusters = [] #A list of list of all faces, grouped by the cluster they belong to
         self.candidateFaces = {} #Faces that neighboured a candidate face for the current cluster. Format is candidateFaceIdx : neighbourIdx
         self.incompatibleFaces = [] #For the current cluster, the index of faces that can't be added to the current cluster
+        self.updaterThread = None
+        self.giveUpdates = False
 
     def createNewCluster(self, resetPreviousSearch = False):
         self.clusters.append([])
@@ -39,13 +45,35 @@ class ClusteredBMesh:
             self.candidateFaces[candidateFace.index] = baseFace.index
 
     def setFaceAsIncompatible(self, face):
-        if face.index in self.candidateFaces:
+        while face.index in self.candidateFaces:
             self.candidateFaces.pop(face.index)
         self.incompatibleFaces.append(face.index)
-    
+
     def areFacesCandidateForLastCluster(self):
         return (len(self.candidateFaces) > 0)
 
     def getACandidateFace(self):
         candidateIdx = list(self.candidateFaces.keys())[-1]
         return candidateIdx, self.candidateFaces[candidateIdx]
+
+    def activateProgressFeedback(self):
+        self.giveUpdates = True
+        self.updaterThread = threading.Thread(target=self.clusteringProgressInfo)
+        self.updaterThread.start()
+
+    def deactivateProgressFeedback(self):
+        self.giveUpdates = False
+        if not (self.updaterThread is None):
+            self.updaterThread.join()
+        self.updaterThread = None
+
+    def clusteringProgressInfo(self):
+        while self.giveUpdates:
+            #To be called from a thread
+            infoStr = ""
+            infoStr += "Current amount of clusters : {}\n".format(len(self.clusters))
+            infoStr += "Amount of free faces : {}\n".format(len(self.availableFaces))
+            infoStr += "Candidates for current cluster : {}\n".format(len(self.candidateFaces))
+            infoStr += "Discarded for current cluster : {}\n".format(len(self.incompatibleFaces))
+            print(infoStr)
+            time.sleep(0.5)

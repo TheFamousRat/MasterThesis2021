@@ -10,6 +10,8 @@ import pickle
 import threading
 import time
 import gc
+import math
+import numpy as np
 
 gc.enable()
 gc.collect()
@@ -43,13 +45,10 @@ def cacheTextures(sourceObj, bm, cachedImagesDic):
         uniqueMats.add(face.material_index)
     for matIdx in uniqueMats:
         blenderTexture = faceUtils.getMaterialTexture(sourceObj.material_slots[matIdx].material)
-        cachedImages[matIdx] = Image.open(bpy.path.abspath(blenderTexture.filepath), 'r').convert('HSV')
+        cachedImages[matIdx] = Image.open(bpy.path.abspath(blenderTexture.filepath), 'r')#.convert('HSV')
 
 def getMeshHash(obj):
     return hashlib.sha224( str(obj.data.vertices).strip('[]').encode('utf-8') ).hexdigest()
-
-def readCompressedPixels(compPixels):
-    return [[compPixels[pixelIdxStart+i] for i in range(2)] for pixelIdxStart in range(0, len(compPixels), 2)]
 
 ### CODE
 
@@ -77,8 +76,13 @@ clusters = [] #A list of list of all faces, grouped by the cluster they belong t
 candidateFaces = {} #Faces that might 
 incompatibleFaces = [] #For the current cluster, the index of faces that can't be added to the current cluster
 
+# Creating a folder storing that mesh's baked data
+meshDataPath = os.path.join(bpy.path.abspath("//"), 'meshesData/{}/'.format(getMeshHash(currentObject)))
+if not os.path.exists(meshDataPath):
+    os.makedirs(meshDataPath)
+    
 # Baking the face pixels for faster clustering
-bakedFacePixelsPath = os.path.join(bpy.path.abspath("//"), '{}.pkl'.format(getMeshHash(currentObject)))
+bakedFacePixelsPath = os.path.join(meshDataPath, 'pixels.pkl')
 
 if not os.path.exists(bakedFacePixelsPath):
     print("Baked mesh pixels not found, starting baking process...")
@@ -101,22 +105,30 @@ with open(bakedFacePixelsPath, 'rb') as f:
 end = time.time()
 print("File loaded in {} seconds".format(end - start))
 
+#We compute a few statistics for each face color set : mean, inertia etc.
+print("Baking face color characteristics...")
+faceUtils.bakeFacePixelsStatistics(bm, os.path.join(meshDataPath, 'stats.pkl'), bakedPixels, 8)
+
 print("Starting faces per-color clustering...")
-print(readCompressedPixels(bakedPixels[70000]))
 if False:
     clusteredMesh = clusteredBmesh.ClusteredBMesh(bm)
     clusteredMesh.createNewCluster(True)
     clusteredMesh.addFaceToLastCluster(bm.faces[0])
-
+    clusteredMesh.activateProgressFeedback()
+    
     while clusteredMesh.areFacesCandidateForLastCluster():
         candidateIdx, neighbourIdx = clusteredMesh.getACandidateFace()
         candidateFace = bm.faces[candidateIdx]
+        candidateFacePixels = faceUtils.normalizeCompressedPixels_HS(bakedPixels[candidateIdx])
         neighbourFace = bm.faces[neighbourIdx]
+        neighbourFacePixels = faceUtils.normalizeCompressedPixels_HS(bakedPixels[neighbourIdx])
         
-        if faceUtils.getFacePixelsDistance(bm, candidateFace, neighbourFace, cachedImages) < 0.01:
+        if faceUtils.getFacePixelsDistance(candidateFacePixels, neighbourFacePixels) < 0.01:
             clusteredMesh.addFaceToLastCluster(candidateFace)
         else:
             clusteredMesh.setFaceAsIncompatible(candidateFace)
+    
+    clusteredMesh.deactivateProgressFeedback()
 
 
 print("Calling garbage collector")
