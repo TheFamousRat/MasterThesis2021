@@ -98,16 +98,15 @@ else:
     print("Baked pixels file found in {}".format(bakedFacePixelsPath))
 
 print("Loading baked pixels file...")
-start = time.time()
 bakedPixels = {}
 with open(bakedFacePixelsPath, 'rb') as f:
-    bakedPixels = pickle.load(f)#json.load(f, object_hook=lambda d: {int(k) if k.lstrip('-').isdigit() else k: v for k, v in d.items()})
-end = time.time()
-print("File loaded in {} seconds".format(end - start))
+    bakedPixels = pickle.load(f)
 
 #We compute a few statistics for each face color set : mean, inertia etc.
 print("Baking face color characteristics...")
-faceUtils.bakeFacePixelsStatistics(bm, os.path.join(meshDataPath, 'stats.pkl'), bakedPixels, 8)
+faceUtils.bakeFacePixelsStatistics(bm, os.path.join(meshDataPath, 'stats.pkl'), 8, bakedPixels)
+
+
 
 print("Starting faces per-color clustering...")
 if False:

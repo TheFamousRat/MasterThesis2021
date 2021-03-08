@@ -149,7 +149,7 @@ def giveThreadsState(threadsList, threadsProgressList, threadsWorkSize):
     while True:
 
         aliveThreadsCount = 0
-        maxTimeRemaining = 0.0
+        totalTimeRemaining = 0.0
         threadsReportStr = ""
 
         for i in range(len(threadsList) - 1):
@@ -165,14 +165,14 @@ def giveThreadsState(threadsList, threadsProgressList, threadsWorkSize):
                 threadsReportStr += str( 100.0 * workProgress ) + " %"
 
                 threadTimeRemaing = timeElapsed * ((1.0 / workProgress) - 1.0)
-                maxTimeRemaining = max(maxTimeRemaining, threadTimeRemaing)
+                totalTimeRemaining += threadTimeRemaing
             else:
 
                 threadsReportStr += "Done."
             
             threadsReportStr += '\n'
 
-        threadsReportStr += 'Remaining time : {} s\n'.format(maxTimeRemaining)
+        threadsReportStr += 'Remaining time : {} s\n'.format(totalTimeRemaining / float(aliveThreadsCount))
         sys.stdout.write(threadsReportStr)
 
         if aliveThreadsCount == 0:
@@ -199,6 +199,8 @@ def bakeFacesInfo(bm, fileName, threadsAmount, infoFunc, infoFuncParams):
 	:param threadsAmount: Number of threads
 	:type threadsAmount: int
 	"""
+	start = time.time()
+	
 	bakedFacesInfo = {}
 	facesCount = len(bm.faces)
 
@@ -226,9 +228,14 @@ def bakeFacesInfo(bm, fileName, threadsAmount, infoFunc, infoFuncParams):
 	for t in threads:
 		t.join()
 
+	end = time.time()
+	print("Baking done in {} seconds".format(end - start))
+
 	#Emptying the file before writing
 	with open(fileName, 'wb') as f:
 		pickle.dump(bakedFacesInfo, f)
+
+	print("File baked to {}".format(fileName))
 
 def readCompressedPixels(compPixels, colorDim):
     return [[compPixels[pixelIdxStart+i] for i in range(colorDim)] for pixelIdxStart in range(0, len(compPixels), colorDim)]
