@@ -60,10 +60,15 @@ def getCombinedFaceColorsInertia(faceAInfo, faceBInfo):
     combinedSize = float(nA + nB)
     combinedCentroid = (nA * faceACentroid + nB * faceBCentroid)/combinedSize
 
-    faceAEnergy = (nA - 1.0) * faceAInfo["inert"] + nA * pow(np.linalg.norm(combinedCentroid - faceACentroid), 2.0)
-    faceBEnergy = (nB - 1.0) * faceBInfo["inert"] + nB * pow(np.linalg.norm(combinedCentroid - faceBCentroid), 2.0)
+    #faceAEnergy = (nA - 1.0) * faceAInfo["inert"] + nA * pow(np.linalg.norm(combinedCentroid - faceACentroid), 2.0)
+    #faceBEnergy = (nB - 1.0) * faceBInfo["inert"] + nB * pow(np.linalg.norm(combinedCentroid - faceBCentroid), 2.0)
 
-    combinedInertia = (faceAEnergy + faceBEnergy)/(nA + nB - 1.0)
+    #combinedInertia = (faceAEnergy + faceBEnergy)/(nA + nB - 1.0)
+    
+    inertiaEnergy = (combinedSize - 1.0) * (faceAInfo["inert"] + faceBInfo["inert"])
+    centroidsEnergy = combinedSize * (faceUtils.squaredEuclideanNorm(combinedCentroid, faceACentroid) + faceUtils.squaredEuclideanNorm(combinedCentroid, faceBCentroid))
+    
+    combinedInertia = (inertiaEnergy + centroidsEnergy) / ((2.0 * combinedSize) - 1.0)
 
     return combinedSize, combinedCentroid.tolist(), combinedInertia
 
@@ -139,7 +144,7 @@ print(getCombinedFaceColorsInertia(face1Info, face2Info))
 if True:
     clusteredMesh = clusteredBmesh.ClusteredBMesh(bm)
     clusteredMesh.createNewCluster(True)
-    clusteredMesh.addFaceToLastCluster(bm.faces[10000])
+    clusteredMesh.addFaceToLastCluster(bm.faces[0])
     clusteredMesh.activateProgressFeedback()
     
     try:
@@ -149,7 +154,7 @@ if True:
             candidateFace = bm.faces[candidateIdx]
             
             combinedSize, combinedCentroid, combinedInertia = getCombinedFaceColorsInertia(currentClusterInfo, bakedFaceColStats[candidateIdx])
-            if combinedInertia < 0.02:
+            if combinedInertia < 1.0:
                 clusteredMesh.addFaceToLastCluster(candidateFace)
                 currentClusterInfo = faceUtils.getFaceStatsFormated(combinedSize, combinedCentroid, combinedInertia)
             else:
