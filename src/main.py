@@ -50,6 +50,24 @@ def cacheTextures(sourceObj, bm, cachedImagesDic):
 def getMeshHash(obj):
     return hashlib.sha224( str(obj.data.vertices).strip('[]').encode('utf-8') ).hexdigest()
 
+def getCombinedFaceColorsInertia(faceAInfo, faceBInfo):
+    nA = float(faceAInfo["n"])
+    nB = float(faceBInfo["n"])
+
+    faceACentroid = np.array(faceAInfo["avg"])
+    faceBCentroid = np.array(faceBInfo["avg"])
+
+    combinedSize = float(nA + nB)
+    combinedCentroid = (nA * faceACentroid + nB * faceBCentroid)/combinedSize
+
+    faceAEnergy = (nA - 1.0) * faceAInfo["inert"] + nA * pow(np.linalg.norm(combinedCentroid - faceACentroid), 2.0)
+    faceBEnergy = (nB - 1.0) * faceBInfo["inert"] + nB * pow(np.linalg.norm(combinedCentroid - faceBCentroid), 2.0)
+
+    combinedInertia = (faceAEnergy + faceBEnergy)/(nA + nB - 1.0)
+
+    return combinedSize, combinedCentroid.tolist(), combinedInertia
+
+
 ### CODE
 
 currentObject = bpy.context.object
@@ -82,18 +100,13 @@ if not os.path.exists(meshDataPath):
     os.makedirs(meshDataPath)
     
 # Baking the face pixels for faster clustering
-bakedFacePixelsPath = os.path.join(meshDataPath, 'pixels.pkl')
-
+bakedFacePixelsPath = os.path.join(meshDataPath, 'faceColors.pkl')
 if not os.path.exists(bakedFacePixelsPath):
     print("Baked mesh pixels not found, starting baking process...")
-    start = time.time()
-    faceUtils.bakeFacePixels(bm, bakedFacePixelsPath, cachedImages, 8) #8 threads works well on my machine, might need tuning
-    end = time.time()
+    faceUtils.bakeFacePixels(bm, bakedFacePixelsPath, 8, cachedImages) #8 threads works well on my machine, might need tuning
     # 4 threads : 812.0091547966003 seconds
     # 8 threads : 515.5761802196503 seconds
     # 16 threads : 513.2351567745209 seconds
-    print("Baking done in {} seconds".format(end - start))
-    print("File baked to {}".format(bakedFacePixelsPath))
 else:
     print("Baked pixels file found in {}".format(bakedFacePixelsPath))
 
@@ -103,31 +116,48 @@ with open(bakedFacePixelsPath, 'rb') as f:
     bakedPixels = pickle.load(f)
 
 #We compute a few statistics for each face color set : mean, inertia etc.
-print("Baking face color characteristics...")
-faceUtils.bakeFacePixelsStatistics(bm, os.path.join(meshDataPath, 'stats.pkl'), 8, bakedPixels)
+bakedFaceColorsStatsPath = os.path.join(meshDataPath, 'faceColorsStats.pkl')
+if not os.path.exists(bakedFaceColorsStatsPath):
+    print("Baking face color statistics...")
+    faceUtils.bakeFacePixelsStatistics(bm, bakedFaceColorsStatsPath, 8, bakedPixels)
 
-
+print("Loading face color statistics...")
+bakedFaceColStats = {}
+with open(bakedFaceColorsStatsPath, 'rb') as f:
+    bakedFaceColStats = pickle.load(f)
 
 print("Starting faces per-color clustering...")
-if False:
+
+face1Idx = 0
+face2Idx = 1
+face1Info = bakedFaceColStats[face1Idx]
+face2Info = bakedFaceColStats[face2Idx]
+print(face1Info)
+print(face2Info)
+print(getCombinedFaceColorsInertia(face1Info, face2Info))
+
+if True:
     clusteredMesh = clusteredBmesh.ClusteredBMesh(bm)
     clusteredMesh.createNewCluster(True)
-    clusteredMesh.addFaceToLastCluster(bm.faces[0])
+    clusteredMesh.addFaceToLastCluster(bm.faces[10000])
     clusteredMesh.activateProgressFeedback()
     
-    while clusteredMesh.areFacesCandidateForLastCluster():
-        candidateIdx, neighbourIdx = clusteredMesh.getACandidateFace()
-        candidateFace = bm.faces[candidateIdx]
-        candidateFacePixels = faceUtils.normalizeCompressedPixels_HS(bakedPixels[candidateIdx])
-        neighbourFace = bm.faces[neighbourIdx]
-        neighbourFacePixels = faceUtils.normalizeCompressedPixels_HS(bakedPixels[neighbourIdx])
-        
-        if faceUtils.getFacePixelsDistance(candidateFacePixels, neighbourFacePixels) < 0.01:
-            clusteredMesh.addFaceToLastCluster(candidateFace)
-        else:
-            clusteredMesh.setFaceAsIncompatible(candidateFace)
-    
-    clusteredMesh.deactivateProgressFeedback()
+    try:
+        currentClusterInfo = bakedFaceColStats[clusteredMesh.clusters[-1][0]]
+        while clusteredMesh.areFacesCandidateForLastCluster():
+            candidateIdx, neighbourIdx = clusteredMesh.getACandidateFace()
+            candidateFace = bm.faces[candidateIdx]
+            
+            combinedSize, combinedCentroid, combinedInertia = getCombinedFaceColorsInertia(currentClusterInfo, bakedFaceColStats[candidateIdx])
+            if combinedInertia < 0.02:
+                clusteredMesh.addFaceToLastCluster(candidateFace)
+                currentClusterInfo = faceUtils.getFaceStatsFormated(combinedSize, combinedCentroid, combinedInertia)
+            else:
+                clusteredMesh.setFaceAsIncompatible(candidateFace)
+    except e:
+        clusteredMesh.deactivateProgressFeedback()
+
+clusteredMesh.deactivateProgressFeedback()
 
 
 print("Calling garbage collector")

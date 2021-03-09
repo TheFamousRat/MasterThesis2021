@@ -141,44 +141,43 @@ def bakeFacePixelsColorsStatistics(bm, face, bakedPixelsColors):
 	Returns the pixels of the a face as serialized list
 	"""
 	pixels = normalizeCompressedPixels(bakedPixelsColors[face.index], 'HS')
-	return computeFaceColorCharacteristics(pixels)
+	return getFaceColorStatistics(pixels)
 
 def giveThreadsState(threadsList, threadsProgressList, threadsWorkSize):
-    start = time.time()
-    
-    while True:
+	while True:
+		aliveThreadsCount = 0
+		threadsReportStr = ""
+		totalWorkDone = 0
+		totalWorkToDo = 0
 
-        aliveThreadsCount = 0
-        totalTimeRemaining = 0.0
-        threadsReportStr = ""
+		for i in range(len(threadsList) - 1):
+			totalWorkToDo += threadsWorkSize[i]
 
-        for i in range(len(threadsList) - 1):
+			thread = threadsList[i]
+			threadsReportStr += "Thread {} : ".format(i)
 
-            timeElapsed = time.time() - start
-            thread = threadsList[i]
-            threadsReportStr += "Thread {} : ".format(i)
+			if thread.is_alive():
 
-            if thread.is_alive():
+				aliveThreadsCount += 1
+				workProgress = float(threadsProgressList[i] + 1) / float(threadsWorkSize[i])
+				threadsReportStr += str( 100.0 * workProgress ) + " %"
 
-                aliveThreadsCount += 1
-                workProgress = float(threadsProgressList[i] + 1) / float(threadsWorkSize[i])
-                threadsReportStr += str( 100.0 * workProgress ) + " %"
+				totalWorkDone += threadsProgressList[i] + 1
+			else:
+				threadsReportStr += "Done."
+				totalWorkDone += threadsWorkSize[i]
+			
+			threadsReportStr += '\n'
 
-                threadTimeRemaing = timeElapsed * ((1.0 / workProgress) - 1.0)
-                totalTimeRemaining += threadTimeRemaing
-            else:
+		workProgress = float(totalWorkDone) / float(totalWorkToDo)
+		barSize = 20.0
+		threadsReportStr += 'Progress : |{}{}| ({} %)\n'.format('*'*int(workProgress*barSize), ' '*int((1.0 - workProgress)*barSize), 100.0 * workProgress)
+		sys.stdout.write(threadsReportStr)
 
-                threadsReportStr += "Done."
-            
-            threadsReportStr += '\n'
-
-        threadsReportStr += 'Remaining time : {} s\n'.format(totalTimeRemaining / float(aliveThreadsCount))
-        sys.stdout.write(threadsReportStr)
-
-        if aliveThreadsCount == 0:
-            break
-        else:
-            time.sleep(0.5)
+		if aliveThreadsCount == 0:
+			break
+		else:
+			time.sleep(0.5)
         
 
 def bakeFacePixels(bm, fileName, threadsAmount, cachedImages):
@@ -207,6 +206,7 @@ def bakeFacesInfo(bm, fileName, threadsAmount, infoFunc, infoFuncParams):
 	arrayLimits = list(range(0,facesCount, int(facesCount/threadsAmount)))
 	if not ((facesCount - 1) in arrayLimits):
 		arrayLimits.append(facesCount)
+	arrayLimits[-1] = len(bm.faces)
 
 	threads = []
 	threadsProgressList = [0 for i in range(threadsAmount)]
@@ -259,17 +259,24 @@ def normalizeCompressedPixels(compPixels, colorSpace):
 	decompressedPixels = readCompressedPixels(compPixels, colorsDims)
 	return [np.multiply(np.array(pixel), normalizer).tolist() for pixel in decompressedPixels]
 
-def computeFaceColorCharacteristics(pixelColors):
-	ret = {}
+def squaredEuclideanNorm(vA, vB):
+	v = vA - vB
+	return np.dot(v,v)
+
+def getFaceColorStatistics(pixelColors):
 	#1/Project the colors to the color cone, a space where the distance between colors can be the euclidean one
 	projectedFacePixels = []
 	for pixelCol in pixelColors:
 		projectedFacePixels.append([math.cos(pixelCol[0]) * pixelCol[1], math.sin(pixelCol[0]) * pixelCol[1]])
 	projectedFacePixels = np.array(projectedFacePixels)
 
-	#2/Calculate the centroid of the projected point cloud (meanA = a.mean(0))
-	ret["mean"] = projectedFacePixels.mean(0)
-	#3/Calculate the inertia of the point cloud (np.sum(np.array(cdist(a, np.array([meanA.tolist()])))))
-	ret["inertia"] = np.sum(np.array(cdist(projectedFacePixels, np.array([ret["mean"].tolist()]))))
+	n = len(projectedFacePixels)
+	#2/Calculate the centroid of the projected point cloud (meanA = a.mean(0).tolist())
+	centroid = projectedFacePixels.mean(0).tolist()
+	#3/Calculate the sample standard deviation
+	inertia = np.sum(cdist(projectedFacePixels, np.array([centroid]), squaredEuclideanNorm)) / float(n - 1)
 
-	return ret 
+	return getFaceStatsFormated(n, centroid, inertia)
+
+def getFaceStatsFormated(n, centroid, inertia):
+	return {"n" : n, "avg" : centroid, "inert" : inertia}
