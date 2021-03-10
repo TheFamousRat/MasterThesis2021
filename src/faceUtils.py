@@ -6,7 +6,9 @@ import pickle
 
 import numpy as np
 from scipy.spatial.distance import cdist
-from scipy.optimize import linear_sum_assignment
+from colormath.color_objects import LabColor, sRGBColor
+from colormath.color_conversions import convert_color
+from colormath.color_diff import delta_e_cie2000
 
 import bpy
 import bmesh
@@ -99,20 +101,8 @@ def getFacePixelColors(bm, face, img):
 	For a given face and its given texture, returns the array of pixels colors it covers
 	"""
 	facePixelsCoords = getFacePixels(bm, face, img)
-	return [img.getpixel( (int(pixelCoords[0]), int(pixelCoords[1])) ) for pixelCoords in facePixelsCoords]
-
-def getFacePixelsDistance(face1PixelColors, face2PixelColors):
-	"""
-	Computes and returns the Earth Mover Distance between the pixels of both faces
-	:param face1PixelColors: The pixels of the first face
-	:type face1PixelColors: list
-	:param face2PixelColors: The pixels of the second face
-	:type face2PixelColors: list
-	"""
-
-	Cmat = cdist(face1PixelColors, face2PixelColors, basicUtils.colHSVDist)
-	assignment = linear_sum_assignment(Cmat)
-	return (Cmat[assignment].sum() / len(Cmat[assignment]))
+	ret = [convert_color( sRGBColor(*img.getpixel( (int(pixelCoords[0]), int(pixelCoords[1])) ), True), LabColor ).get_value_tuple() for pixelCoords in facePixelsCoords]
+	return np.array(ret, dtype='float16')
 
 def getFaceCSVstr(bm, face, imagesCache):
     ret = ""
@@ -134,16 +124,19 @@ def bakeFacePixelsColors(bm, face, cachedMatImages):
 	Returns the pixels of the a face as serialized list
 	"""
 	pixels = getFacePixelColors(bm, face, cachedMatImages[face.material_index])
-	return [pixel[pxId] for pixel in pixels for pxId in range(2)]
+	return [x for pixel in pixels for x in pixel]
 
 def bakeFacePixelsColorsStatistics(bm, face, bakedPixelsColors):
 	"""
 	Returns the pixels of the a face as serialized list
 	"""
-	pixels = normalizeCompressedPixels(bakedPixelsColors[face.index], 'HS')
+	pixels = readCompressedPixels(bakedPixelsColors[face.index], 3)
 	return getFaceColorStatistics(pixels)
 
 def giveThreadsState(threadsList, threadsProgressList, threadsWorkSize):
+	"""
+	Updater function that prints to the console a string giving the progress state of the threads
+	"""
 	while True:
 		aliveThreadsCount = 0
 		threadsReportStr = ""
@@ -206,7 +199,7 @@ def bakeFacesInfo(bm, fileName, threadsAmount, infoFunc, infoFuncParams):
 	arrayLimits = list(range(0,facesCount, int(facesCount/threadsAmount)))
 	if not ((facesCount - 1) in arrayLimits):
 		arrayLimits.append(facesCount)
-	arrayLimits[-1] = len(bm.faces)
+	arrayLimits[-1] = facesCount
 
 	threads = []
 	threadsProgressList = [0 for i in range(threadsAmount)]
@@ -238,7 +231,7 @@ def bakeFacesInfo(bm, fileName, threadsAmount, infoFunc, infoFuncParams):
 	print("File baked to {}".format(fileName))
 
 def readCompressedPixels(compPixels, colorDim):
-    return [[compPixels[pixelIdxStart+i] for i in range(colorDim)] for pixelIdxStart in range(0, len(compPixels), colorDim)]
+    return np.array([[compPixels[pixelIdxStart+i] for i in range(colorDim)] for pixelIdxStart in range(0, len(compPixels), colorDim)])
 
 def normalizeCompressedPixels(compPixels, colorSpace):
 	"""
@@ -263,20 +256,26 @@ def squaredEuclideanNorm(vA, vB):
 	v = vA - vB
 	return np.dot(v,v)
 
+def test(col1, col2):
+	return pow(delta_e_cie2000(col1[0], col2[0]), 2.0)
+
 def getFaceColorStatistics(pixelColors):
 	#1/Project the colors to the color cone, a space where the distance between colors can be the euclidean one
-	projectedFacePixels = []
-	for pixelCol in pixelColors:
-		projectedFacePixels.append([math.cos(pixelCol[0]) * pixelCol[1], math.sin(pixelCol[0]) * pixelCol[1]])
-	projectedFacePixels = np.array(projectedFacePixels)
+	#projectedFacePixels = []
+	#for pixelCol in pixelColors:
+	#	projectedFacePixels.append([math.cos(pixelCol[0]) * pixelCol[1], math.sin(pixelCol[0]) * pixelCol[1]])
+	#projectedFacePixels = np.array(projectedFacePixels)
 
-	n = len(projectedFacePixels)
+	n = len(pixelColors)
 	#2/Calculate the centroid of the projected point cloud (meanA = a.mean(0).tolist())
-	centroid = projectedFacePixels.mean(0).tolist()
+	centroid = pixelColors.mean(0)
 	#3/Calculate the sample standard deviation
-	inertia = np.sum(cdist(projectedFacePixels, np.array([centroid]), squaredEuclideanNorm)) / float(n - 1)
+	labColorObjects = [[LabColor(*(pixelCol))] for pixelCol in pixelColors]
+	centroidColor = [[LabColor(*centroid)]]
+
+	inertia = np.sum(cdist(labColorObjects, centroidColor, test)) / float(n - 1)
 
 	return getFaceStatsFormated(n, centroid, inertia)
 
 def getFaceStatsFormated(n, centroid, inertia):
-	return {"n" : n, "avg" : centroid, "inert" : inertia}
+	return {"n" : n, "center" : centroid, "std" : inertia}

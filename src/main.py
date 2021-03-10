@@ -45,7 +45,7 @@ def cacheTextures(sourceObj, bm, cachedImagesDic):
         uniqueMats.add(face.material_index)
     for matIdx in uniqueMats:
         blenderTexture = faceUtils.getMaterialTexture(sourceObj.material_slots[matIdx].material)
-        cachedImages[matIdx] = Image.open(bpy.path.abspath(blenderTexture.filepath), 'r')#.convert('HSV')
+        cachedImages[matIdx] = Image.open(bpy.path.abspath(blenderTexture.filepath), 'r').convert("RGB")
 
 def getMeshHash(obj):
     return hashlib.sha224( str(obj.data.vertices).strip('[]').encode('utf-8') ).hexdigest()
@@ -54,23 +54,18 @@ def getCombinedFaceColorsInertia(faceAInfo, faceBInfo):
     nA = float(faceAInfo["n"])
     nB = float(faceBInfo["n"])
 
-    faceACentroid = np.array(faceAInfo["avg"])
-    faceBCentroid = np.array(faceBInfo["avg"])
+    faceACentroid = np.array(faceAInfo["center"], dtype='float64')
+    faceBCentroid = np.array(faceBInfo["center"], dtype='float64')
 
     combinedSize = float(nA + nB)
     combinedCentroid = (nA * faceACentroid + nB * faceBCentroid)/combinedSize
 
-    #faceAEnergy = (nA - 1.0) * faceAInfo["inert"] + nA * pow(np.linalg.norm(combinedCentroid - faceACentroid), 2.0)
-    #faceBEnergy = (nB - 1.0) * faceBInfo["inert"] + nB * pow(np.linalg.norm(combinedCentroid - faceBCentroid), 2.0)
+    faceAEnergy = (nA - 1.0) * faceAInfo["std"] + nA * pow(np.linalg.norm(combinedCentroid - faceACentroid), 2.0)
+    faceBEnergy = (nB - 1.0) * faceBInfo["std"] + nB * pow(np.linalg.norm(combinedCentroid - faceBCentroid), 2.0)
 
-    #combinedInertia = (faceAEnergy + faceBEnergy)/(nA + nB - 1.0)
-    
-    inertiaEnergy = (combinedSize - 1.0) * (faceAInfo["inert"] + faceBInfo["inert"])
-    centroidsEnergy = combinedSize * (faceUtils.squaredEuclideanNorm(combinedCentroid, faceACentroid) + faceUtils.squaredEuclideanNorm(combinedCentroid, faceBCentroid))
-    
-    combinedInertia = (inertiaEnergy + centroidsEnergy) / ((2.0 * combinedSize) - 1.0)
+    combinedInertia = (faceAEnergy + faceBEnergy)/(nA + nB - 1.0)
 
-    return combinedSize, combinedCentroid.tolist(), combinedInertia
+    return combinedSize, combinedCentroid, combinedInertia
 
 
 ### CODE
@@ -154,7 +149,7 @@ if True:
             candidateFace = bm.faces[candidateIdx]
             
             combinedSize, combinedCentroid, combinedInertia = getCombinedFaceColorsInertia(currentClusterInfo, bakedFaceColStats[candidateIdx])
-            if combinedInertia < 1.0:
+            if combinedInertia < 50.0:
                 clusteredMesh.addFaceToLastCluster(candidateFace)
                 currentClusterInfo = faceUtils.getFaceStatsFormated(combinedSize, combinedCentroid, combinedInertia)
             else:
