@@ -3,7 +3,6 @@ import numpy as np
 
 class Patch:
     def __init__(self, bmeshObj, centralFaceIdx, ringsNum):
-        self.bmeshObj = bmeshObj
         #Creates a patch, built from a central face and its ringsNum neighbouring rings
         self.centralFaceIdx = centralFaceIdx
         self.rings = []
@@ -23,25 +22,25 @@ class Patch:
                         if not cond:
                             self.rings[-1].append(linkedFace.index)
 
-        self.__calculatePatchEigenValues()
+        self.__calculatePatchEigenValues(bmeshObj)
 
-    def __calculatePatchEigenValues(self):
+    def __calculatePatchEigenValues(self, bmeshObj):
         #Extracting the eigenvalues from the patch's normals' correlation matrix. Used to compare patches between each other
         normalsConvMat = np.zeros((3,3))
 
         maxFaceSize = 0.0
         for ring in self.rings:
             for faceIdx in ring:
-                maxFaceSize = max(maxFaceSize, self.bmeshObj.faces[faceIdx].calc_area())
+                maxFaceSize = max(maxFaceSize, bmeshObj.faces[faceIdx].calc_area())
 
-        centralFaceCenter = np.array(self.bmeshObj.faces[self.centralFaceIdx].calc_center_median_weighted())
+        centralFaceCenter = np.array(bmeshObj.faces[self.centralFaceIdx].calc_center_median_weighted())
         for ring in self.rings:
             for faceIdx in ring:
-                faceNormal = np.matrix(np.array(self.bmeshObj.faces[faceIdx].normal)).T #Transforming the face normal into a vector
-                faceCenter = np.array(self.bmeshObj.faces[faceIdx].calc_center_median_weighted())
+                faceNormal = np.matrix(np.array(bmeshObj.faces[faceIdx].normal)).T #Transforming the face normal into a vector
+                faceCenter = np.array(bmeshObj.faces[faceIdx].calc_center_median_weighted())
                 sigma = 1.0
                 facesDist = np.linalg.norm(centralFaceCenter - faceCenter)
-                faceWeight = (self.bmeshObj.faces[faceIdx].calc_area() / maxFaceSize) * math.exp(-facesDist/(sigma/3.0))
+                faceWeight = (bmeshObj.faces[faceIdx].calc_area() / maxFaceSize) * math.exp(-facesDist/(sigma/3.0))
                 normalsConvMat += faceWeight * (faceNormal @ faceNormal.T)
 
         self.eigenVals, self.eigenVecs = np.linalg.eig(normalsConvMat)
