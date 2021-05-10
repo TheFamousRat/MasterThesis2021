@@ -56,6 +56,8 @@ def getCombinedFaceColorsInertia(faceAInfo, faceBInfo):
 
     faceACentroid = np.array(faceAInfo["center"], dtype='float64')
     faceBCentroid = np.array(faceBInfo["center"], dtype='float64')
+    faceACentroid[2] = 1.0
+    faceBCentroid[2] = 1.0
 
     combinedSize = float(nA + nB)
     combinedCentroid = (nA * faceACentroid + nB * faceBCentroid)/combinedSize
@@ -139,25 +141,28 @@ print(getCombinedFaceColorsInertia(face1Info, face2Info))
 if True:
     clusteredMesh = clusteredBmesh.ClusteredBMesh(bm)
     clusteredMesh.createNewCluster(True)
-    clusteredMesh.addFaceToLastCluster(bm.faces[0])
+    clusteredMesh.addFaceToLastCluster(bm.faces[10000])
     clusteredMesh.activateProgressFeedback()
     
     try:
         currentClusterInfo = bakedFaceColStats[clusteredMesh.clusters[-1][0]]
         while clusteredMesh.areFacesCandidateForLastCluster():
-            candidateIdx, neighbourIdx = clusteredMesh.getACandidateFace()
+            candidateIdx, neighbourIdx = clusteredMesh.getACandidateFace(True)
             candidateFace = bm.faces[candidateIdx]
             
+            #currentClusterInfo = bakedFaceColStats[neighbourIdx]
+            
             combinedSize, combinedCentroid, combinedInertia = getCombinedFaceColorsInertia(currentClusterInfo, bakedFaceColStats[candidateIdx])
-            if combinedInertia < 50.0:
+            if combinedInertia < 5.0:
                 clusteredMesh.addFaceToLastCluster(candidateFace)
-                currentClusterInfo = faceUtils.getFaceStatsFormated(combinedSize, combinedCentroid, combinedInertia)
-            else:
-                clusteredMesh.setFaceAsIncompatible(candidateFace)
-    except e:
+                #currentClusterInfo = faceUtils.getFaceStatsFormated(combinedSize, combinedCentroid, combinedInertia)
+            #else:
+            #   clusteredMesh.setFaceAsIncompatible(candidateFace)
+    except Exception as inst:
         clusteredMesh.deactivateProgressFeedback()
-
-clusteredMesh.deactivateProgressFeedback()
+        raise(inst)
+        
+    clusteredMesh.deactivateProgressFeedback()
 
 
 print("Calling garbage collector")

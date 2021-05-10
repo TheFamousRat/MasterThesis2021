@@ -6,9 +6,9 @@ import pickle
 
 import numpy as np
 from scipy.spatial.distance import cdist
-from colormath.color_objects import LabColor, sRGBColor
+from colormath.color_objects import LabColor, sRGBColor, HSVColor
 from colormath.color_conversions import convert_color
-from colormath.color_diff import delta_e_cie2000
+from colormath.color_diff import delta_e_cie1976, delta_e_cie1994, delta_e_cie2000
 
 import bpy
 import bmesh
@@ -101,7 +101,8 @@ def getFacePixelColors(bm, face, img):
 	For a given face and its given texture, returns the array of pixels colors it covers
 	"""
 	facePixelsCoords = getFacePixels(bm, face, img)
-	ret = [convert_color( sRGBColor(*img.getpixel( (int(pixelCoords[0]), int(pixelCoords[1])) ), True), LabColor ).get_value_tuple() for pixelCoords in facePixelsCoords]
+	# Converting the pixels of a face from upscaled sRGB (PIL base format), to sRGB, to a format of choice suited for color comparison here
+	ret = [convert_color( sRGBColor(*img.getpixel( (int(pixelCoords[0]), int(pixelCoords[1])) ), True), HSVColor ).get_value_tuple() for pixelCoords in facePixelsCoords]
 	return np.array(ret, dtype='float16')
 
 def getFaceCSVstr(bm, face, imagesCache):
@@ -124,7 +125,7 @@ def bakeFacePixelsColors(bm, face, cachedMatImages):
 	Returns the pixels of the a face as serialized list
 	"""
 	pixels = getFacePixelColors(bm, face, cachedMatImages[face.material_index])
-	return [x for pixel in pixels for x in pixel]
+	return np.array([x for pixel in pixels for x in pixel])
 
 def bakeFacePixelsColorsStatistics(bm, face, bakedPixelsColors):
 	"""
@@ -137,11 +138,15 @@ def giveThreadsState(threadsList, threadsProgressList, threadsWorkSize):
 	"""
 	Updater function that prints to the console a string giving the progress state of the threads
 	"""
+
+	start = time.time()
+
 	while True:
 		aliveThreadsCount = 0
 		threadsReportStr = ""
 		totalWorkDone = 0
 		totalWorkToDo = 0
+		timeElapsed = time.time() - start
 
 		for i in range(len(threadsList) - 1):
 			totalWorkToDo += threadsWorkSize[i]
@@ -153,7 +158,7 @@ def giveThreadsState(threadsList, threadsProgressList, threadsWorkSize):
 
 				aliveThreadsCount += 1
 				workProgress = float(threadsProgressList[i] + 1) / float(threadsWorkSize[i])
-				threadsReportStr += str( 100.0 * workProgress ) + " %"
+				threadsReportStr += "{:.3f} %".format(100.0 * workProgress)
 
 				totalWorkDone += threadsProgressList[i] + 1
 			else:
@@ -163,8 +168,9 @@ def giveThreadsState(threadsList, threadsProgressList, threadsWorkSize):
 			threadsReportStr += '\n'
 
 		workProgress = float(totalWorkDone) / float(totalWorkToDo)
-		barSize = 20.0
-		threadsReportStr += 'Progress : |{}{}| ({} %)\n'.format('*'*int(workProgress*barSize), ' '*int((1.0 - workProgress)*barSize), 100.0 * workProgress)
+		#threadsReportStr += 'Progress : |{}{}| ({} %)\n'.format('*'*int(workProgress*barSize), ' '*int((1.0 - workProgress)*barSize), 100.0 * workProgress)
+		timeTotal = timeElapsed / workProgress
+		threadsReportStr += "Remaining time : {:.3f} s\n".format(timeTotal - timeElapsed)
 		sys.stdout.write(threadsReportStr)
 
 		if aliveThreadsCount == 0:
@@ -196,10 +202,8 @@ def bakeFacesInfo(bm, fileName, threadsAmount, infoFunc, infoFuncParams):
 	bakedFacesInfo = {}
 	facesCount = len(bm.faces)
 
-	arrayLimits = list(range(0,facesCount, int(facesCount/threadsAmount)))
-	if not ((facesCount - 1) in arrayLimits):
-		arrayLimits.append(facesCount)
-	arrayLimits[-1] = facesCount
+	#Cutting the arrays to work on in same-sized chunks for each thread
+	arrayLimits = [int(i*float(facesCount/threadsAmount)) for i in range(threadsAmount+1)]
 
 	threads = []
 	threadsProgressList = [0 for i in range(threadsAmount)]
@@ -224,7 +228,6 @@ def bakeFacesInfo(bm, fileName, threadsAmount, infoFunc, infoFuncParams):
 	end = time.time()
 	print("Baking done in {} seconds".format(end - start))
 
-	#Emptying the file before writing
 	with open(fileName, 'wb') as f:
 		pickle.dump(bakedFacesInfo, f)
 
@@ -256,24 +259,27 @@ def squaredEuclideanNorm(vA, vB):
 	v = vA - vB
 	return np.dot(v,v)
 
-def test(col1, col2):
-	return pow(delta_e_cie2000(col1[0], col2[0]), 2.0)
+def colDist_LAB(col1, col2):
+	return pow(np.linalg.norm(col1 - col2), 2.0)
+
+def colDist_HS(col1, col2):
+	col1Cop = np.array([np.cos(np.deg2rad(col1[0])) * col1[1], np.sin(np.deg2rad(col1[0])) * col1[1]])
+	col2Cop = np.array([np.cos(np.deg2rad(col2[0])) * col2[1], np.sin(np.deg2rad(col2[0])) * col2[1]])
+	colDiff = col1Cop - col2Cop
+	return np.dot(colDiff, colDiff)
 
 def getFaceColorStatistics(pixelColors):
 	#1/Project the colors to the color cone, a space where the distance between colors can be the euclidean one
-	#projectedFacePixels = []
-	#for pixelCol in pixelColors:
-	#	projectedFacePixels.append([math.cos(pixelCol[0]) * pixelCol[1], math.sin(pixelCol[0]) * pixelCol[1]])
-	#projectedFacePixels = np.array(projectedFacePixels)
-
 	n = len(pixelColors)
+
 	#2/Calculate the centroid of the projected point cloud (meanA = a.mean(0).tolist())
 	centroid = pixelColors.mean(0)
-	#3/Calculate the sample standard deviation
-	labColorObjects = [[LabColor(*(pixelCol))] for pixelCol in pixelColors]
-	centroidColor = [[LabColor(*centroid)]]
 
-	inertia = np.sum(cdist(labColorObjects, centroidColor, test)) / float(n - 1)
+	#3/Calculate the sample standard deviation
+	labColorObjects = np.array([[pixel[i] for i in range(1,3)] for pixel in pixelColors], dtype='float64')
+	centroidColor = np.array([[centroid[1], centroid[2]]], dtype='float64')
+
+	inertia = np.sum(cdist(labColorObjects, centroidColor, colDist_HS)) / float(n - 1)
 
 	return getFaceStatsFormated(n, centroid, inertia)
 

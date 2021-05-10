@@ -15,7 +15,7 @@ class ClusteredBMesh:
     def __init__(self, bm):
         self.availableFaces = list(range(len(bm.faces))) #The index of the faces not belonging to any cluster
         self.clusters = [] #A list of list of all faces, grouped by the cluster they belong to
-        self.candidateFaces = {} #Faces that neighboured a candidate face for the current cluster. Format is candidateFaceIdx : neighbourIdx
+        self.candidateFaces = {} #Faces that neighboured a candidate face for the current cluster. Format is candidateFaceIdx : [possible neighbourIdx]
         self.incompatibleFaces = [] #For the current cluster, the index of faces that can't be added to the current cluster
         self.updaterThread = None
         self.giveUpdates = False
@@ -32,7 +32,7 @@ class ClusteredBMesh:
             self.clusters[-1].append(face.index)
             if face.index in self.availableFaces:
                 self.availableFaces.remove(face.index)
-            while face.index in self.candidateFaces:
+            if face.index in self.candidateFaces:
                 self.candidateFaces.pop(face.index)
 
             for neighbourFace in faceUtils.getFaceAdjacentFaces(face):
@@ -41,20 +41,33 @@ class ClusteredBMesh:
             raise(Exception("Couldn't add face of index {} : Already in the cluster".format(face.index)))
                 
     def addFaceAsCandidate(self, baseFace, candidateFace):
-        if (not (candidateFace.index in self.candidateFaces)) and (not (candidateFace.index in self.clusters[-1])) and (not (candidateFace.index in self.incompatibleFaces)):
-            self.candidateFaces[candidateFace.index] = baseFace.index
+        if (not (candidateFace.index in self.clusters[-1])) and (not (candidateFace.index in self.incompatibleFaces)):
+
+            if not (candidateFace.index in self.candidateFaces):
+                self.candidateFaces[candidateFace.index] = []
+
+            if not (baseFace.index in self.candidateFaces[candidateFace.index]):
+                self.candidateFaces[candidateFace.index].append(baseFace.index)
 
     def setFaceAsIncompatible(self, face):
-        while face.index in self.candidateFaces:
+        if face.index in self.candidateFaces:
             self.candidateFaces.pop(face.index)
+
         self.incompatibleFaces.append(face.index)
 
     def areFacesCandidateForLastCluster(self):
         return (len(self.candidateFaces) > 0)
 
-    def getACandidateFace(self):
+    def getACandidateFace(self, removePairOnReturn = False):
         candidateIdx = list(self.candidateFaces.keys())[-1]
-        return candidateIdx, self.candidateFaces[candidateIdx]
+        neighbourIdx = self.candidateFaces[candidateIdx][0]
+
+        if removePairOnReturn:
+            self.candidateFaces[candidateIdx].remove(neighbourIdx)
+            if len(self.candidateFaces[candidateIdx]) == 0:
+                self.candidateFaces.pop(candidateIdx)
+
+        return candidateIdx, neighbourIdx
 
     def activateProgressFeedback(self):
         self.giveUpdates = True
