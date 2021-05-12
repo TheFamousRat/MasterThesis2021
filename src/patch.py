@@ -5,6 +5,8 @@ class Patch:
     def __init__(self, bmeshObj, centralFaceIdx, ringsNum):
         #Creates a patch, built from a central face and its ringsNum neighbouring rings
         self.centralFaceIdx = centralFaceIdx
+        self.clusterLabel = None
+
         self.rings = []
         self.rings.append([centralFaceIdx]) #Ring "zero", based on the central face
 
@@ -24,22 +26,34 @@ class Patch:
 
         self.__calculatePatchEigenValues(bmeshObj)
 
+    def __getFaceBarycenter(self, bmeshObj, faceIdx):
+        return np.array(bmeshObj.faces[faceIdx].calc_center_median_weighted())
+
     def __calculatePatchEigenValues(self, bmeshObj):
         #Extracting the eigenvalues from the patch's normals' correlation matrix. Used to compare patches between each other
         normalsConvMat = np.zeros((3,3))
 
+        #Calculating the max face area, to normalize face areas later
         maxFaceSize = 0.0
         for ring in self.rings:
             for faceIdx in ring:
                 maxFaceSize = max(maxFaceSize, bmeshObj.faces[faceIdx].calc_area())
 
-        centralFaceCenter = np.array(bmeshObj.faces[self.centralFaceIdx].calc_center_median_weighted())
+        #Baking faces barycenters
+        facesBarycenters = {}
+        for ring in self.rings:
+            for faceIdx in ring:
+                facesBarycenters[faceIdx] = np.array(bmeshObj.faces[faceIdx].calc_center_median_weighted())
+
+        #Getting the size of a bounding cube for the patch
+        zipdBarycenters = zip(*facesBarycenters.values())
+        sigma = max([max(a) - min(a) for a in zipdBarycenters])
+
+        #Normal tensor voting
         for ring in self.rings:
             for faceIdx in ring:
                 faceNormal = np.matrix(np.array(bmeshObj.faces[faceIdx].normal)).T #Transforming the face normal into a vector
-                faceCenter = np.array(bmeshObj.faces[faceIdx].calc_center_median_weighted())
-                sigma = 1.0
-                facesDist = np.linalg.norm(centralFaceCenter - faceCenter)
+                facesDist = np.linalg.norm(facesBarycenters[self.centralFaceIdx] - facesBarycenters[faceIdx])
                 faceWeight = (bmeshObj.faces[faceIdx].calc_area() / maxFaceSize) * math.exp(-facesDist/(sigma/3.0))
                 normalsConvMat += faceWeight * (faceNormal @ faceNormal.T)
 

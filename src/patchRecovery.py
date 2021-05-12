@@ -5,6 +5,7 @@ import sys
 import time
 import pickle
 import hashlib
+import numpy as np
 
 #Loading user-defined modules (subject to frequent changes and needed reloading)
 pathsToAdd = ["/home/home/thefamousrat/Documents/KU Leuven/Master Thesis/MasterThesis2021/src"]
@@ -29,6 +30,9 @@ def getMeshHash(obj):
     
 def createFacePatch(bmeshObj, face):
     return patch.Patch(bmeshObj, face.index, RINGS_NUM)
+
+def getPatchesSimilarity(patch1, patch2):
+    return np.linalg.norm(patch1.eigenVals - patch2.eigenVals)
     
 ### Logic
 #Creating the bmesh
@@ -49,8 +53,6 @@ if not os.path.exists(meshDataPath):
 meshPatches = []
 
 patchesDataPath = os.path.join(meshDataPath, 'patches.pkl')
-
-
 if os.path.exists(patchesDataPath):
     print("Baked patches file found in {}. Loading...".format(patchesDataPath))
     with open(patchesDataPath, 'rb') as f:
@@ -77,4 +79,10 @@ if len(meshPatches) == 0:
     with open(patchesDataPath, 'wb') as f:
         pickle.dump(meshPatches, f)
     print("Done")
-        
+
+
+patchesDist = []
+basePatch = meshPatches[13000]
+for patch in meshPatches:
+    if getPatchesSimilarity(patch, basePatch) < 2.0:
+        bm.faces[patch.centralFaceIdx].select = True
