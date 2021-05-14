@@ -1,5 +1,6 @@
 import math
 import numpy as np
+from itertools import chain
 
 class Patch:
     def __init__(self, bmeshObj, centralFaceIdx, ringsNum):
@@ -35,34 +36,30 @@ class Patch:
 
         #Calculating the max face area, to normalize face areas later
         maxFaceSize = 0.0
-        for ring in self.rings:
-            for faceIdx in ring:
-                maxFaceSize = max(maxFaceSize, bmeshObj.faces[faceIdx].calc_area())
+        for faceIdx in self.getAllFacesIterator():
+            maxFaceSize = max(maxFaceSize, bmeshObj.faces[faceIdx].calc_area())
 
         #Baking faces barycenters
         facesBarycenters = {}
-        for ring in self.rings:
-            for faceIdx in ring:
-                facesBarycenters[faceIdx] = np.array(bmeshObj.faces[faceIdx].calc_center_median_weighted())
+        for faceIdx in self.getAllFacesIterator():
+            facesBarycenters[faceIdx] = np.array(bmeshObj.faces[faceIdx].calc_center_median_weighted())
 
         #Getting the size of a bounding cube for the patch
-        zipdBarycenters = zip(*facesBarycenters.values())
-        sigma = max([max(a) - min(a) for a in zipdBarycenters])
+        sigma = 0.0
+        facesDists = {}
+        for faceIdx in self.getAllFacesIterator():
+            facesDists[faceIdx] = np.linalg.norm(facesBarycenters[self.centralFaceIdx] - facesBarycenters[faceIdx])
+        sigma = max(facesDists.values())
 
         #Normal tensor voting
-        for ring in self.rings:
-            for faceIdx in ring:
-                faceNormal = np.matrix(np.array(bmeshObj.faces[faceIdx].normal)).T #Transforming the face normal into a vector
-                facesDist = np.linalg.norm(facesBarycenters[self.centralFaceIdx] - facesBarycenters[faceIdx])
-                faceWeight = (bmeshObj.faces[faceIdx].calc_area() / maxFaceSize) * math.exp(-facesDist/(sigma/3.0))
-                normalsConvMat += faceWeight * (faceNormal @ faceNormal.T)
+        for faceIdx in self.getAllFacesIterator():
+            faceNormal = np.matrix(np.array(bmeshObj.faces[faceIdx].normal)).T #Transforming the face normal into a vector
+            faceWeight = (bmeshObj.faces[faceIdx].calc_area() / maxFaceSize) * math.exp(-facesDists[faceIdx]/sigma)
+            normalsConvMat += faceWeight * (faceNormal @ faceNormal.T)
 
         self.eigenVals, self.eigenVecs = np.linalg.eig(normalsConvMat)
 
-    def getEigenValues(self):
-        return self.eigenVals
-
-    def getEigenVectors(self):
-        return self.eigenVecs
+    def getAllFacesIterator(self):
+        return chain.from_iterable(zip(*self.rings))
         
         
