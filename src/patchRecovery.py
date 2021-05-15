@@ -3,7 +3,10 @@ import bpy
 import bmesh
 import sys
 import time
+#To compress mesh data files efficiently
 import pickle
+import lzma
+
 import hashlib
 import numpy as np
 from scipy.spatial.distance import cdist
@@ -56,7 +59,7 @@ meshPatches = []
 patchesDataPath = os.path.join(meshDataPath, 'patches.pkl')
 if os.path.exists(patchesDataPath):
     print("Baked patches file found in {}. Loading...".format(patchesDataPath))
-    with open(patchesDataPath, 'rb') as f:
+    with lzma.open(patchesDataPath, 'rb') as f:
         meshPatches = pickle.load(f)  
     print("Checking integrity...")
     patchRef = createFacePatch(bm, bm.faces[0])
@@ -77,75 +80,13 @@ if len(meshPatches) == 0:
     end = time.time()
     print("Time taken : {} seconds".format(end - start))
     print("Dumping into a binary file...")
-    with open(patchesDataPath, 'wb') as f:
+    with lzma.open(patchesDataPath, 'wb') as f:
         pickle.dump(meshPatches, f)
     print("Done")
 
-from sklearn.cluster import DBSCAN
-from sklearn.cluster import KMeans
-from sklearn.neighbors import KDTree
-
-dataArr = np.array([patch.eigenVals / np.linalg.norm(patch.eigenVals) for patch in meshPatches])
-clustering = KMeans(n_clusters = 5).fit(dataArr)
-
-for i in range(len(dataArr)):
-    if clustering.labels_[i] == 2:
-        bm.faces[i].select = True
-
-def KNNTest():
-    kdt = KDTree(dataArr, leaf_size = 50, metric = 'euclidean')
-    K = 50
-    centralFaceIdx = 0
-    for faceIdx in kdt.query(dataArr, k = K)[1][centralFaceIdx]:
-        bm.faces[faceIdx].select = True
-
-#Trying some DBSCAN algorithm
-def DBSCANImpl():
-    epsilon = 0.1
-    minClusterSize = 5
-    unclusteredPatches = np.array([[patch] for patch in meshPatches])
-    currentClusterNum = -1
-
-    while len(unclusteredPatches) > 0:
-        print("Remaining points : {}".format(len(unclusteredPatches)))
-        sourcePatch = np.array([unclusteredPatches[0]])
-        unclusteredPatches = np.delete(unclusteredPatches, 0, axis = 0)
-        
-        distVec = cdist(sourcePatch, unclusteredPatches, metric = getPatchesSimilarity)
-        neighboursIdx = np.where(distVec < epsilon)[1]
-                
-        if len(neighboursIdx) < minClusterSize:
-            continue #Cluster too small
-        
-        ##Creating new cluster
-        #Labelling the seeds
-        currentClusterNum += 1
-        print("Building cluster #{}".format(currentClusterNum))
-        seeds = np.take(unclusteredPatches, neighboursIdx, axis = 0)
-        sourcePatch[0][0].clusterLabel = currentClusterNum
-        for seed in seeds:
-            seed[0].clusterLabel = currentClusterNum
-        
-        #Removing the seed elements of the new cluster
-        unclusteredPatches = np.delete(unclusteredPatches, neighboursIdx, axis = 0)
-            
-        #Expanding the cluster
-        while len(seeds) > 0:
-            currentSeed = np.array([seeds[0]])
-            seeds = np.delete(seeds, 0, axis = 0)
-            
-            distVec = cdist(currentSeed, unclusteredPatches, metric = getPatchesSimilarity)
-            neighboursIdx = np.where(distVec < epsilon)[1] #New elements to add to the cluster
-            
-            seeds = np.concatenate((seeds, np.take(unclusteredPatches, neighboursIdx, axis = 0)))
-            
-            for newPatchIdx in neighboursIdx:
-                unclusteredPatches[newPatchIdx][0].clusterLabel = currentClusterNum
-            
-            unclusteredPatches = np.delete(unclusteredPatches, neighboursIdx, axis = 0)
-
-            print("Added {} patches to cluster {} (remaining patches : {})".format(len(neighboursIdx), currentClusterNum, len(unclusteredPatches)))
-                    
-    for patch in meshPatches:
-        if patch.clusterLabel == 1:
-            bm.faces[patch.centralFaceIdx].select = True
+#Test to invert a patch position
+patchConsidered = meshPatches[0]
+rotMatInv = np.linalg.inv(np.matrix(patchConsidered.eigenVecs).T)
+for faceIdx in patchConsidered.getFacesIterator():
+    bm.faces[faceIdx].select = True
+bm.faces[patchConsidered.centralFaceIdx].select = False

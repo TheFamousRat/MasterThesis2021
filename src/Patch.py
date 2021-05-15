@@ -1,5 +1,6 @@
 import math
 import numpy as np
+import itertools
 
 class Patch:
     def __init__(self, bmeshObj, centralFaceIdx, ringsNum):
@@ -33,31 +34,32 @@ class Patch:
         #Extracting the eigenvalues from the patch's normals' correlation matrix. Used to compare patches between each other
         normalsConvMat = np.zeros((3,3))
 
-        #Calculating the max face area, to normalize face areas later
+        #Computing some constant values for tensor voting
         maxFaceSize = 0.0
-        for ring in self.rings:
-            for faceIdx in ring:
-                maxFaceSize = max(maxFaceSize, bmeshObj.faces[faceIdx].calc_area())
-
-        #Baking faces barycenters
         facesBarycenters = {}
-        for ring in self.rings:
-            for faceIdx in ring:
-                facesBarycenters[faceIdx] = np.array(bmeshObj.faces[faceIdx].calc_center_median_weighted())
-
-        #Getting the size of a bounding cube for the patch
         sigma = 0.0
         facesDists = {}
-        for ring in self.rings:
-            for faceIdx in ring:
-                facesDists[faceIdx] = np.linalg.norm(facesBarycenters[self.centralFaceIdx] - facesBarycenters[faceIdx])
+
+        for faceIdx in self.getFacesIterator():
+            #Calculating the max face area, to normalize face areas later
+            maxFaceSize = max(maxFaceSize, bmeshObj.faces[faceIdx].calc_area())
+            #Baking faces barycenters
+            facesBarycenters[faceIdx] = np.array(bmeshObj.faces[faceIdx].calc_center_median_weighted())
+            #Finding the largest distance between the central face and a triangle barycenter
+            facesDists[faceIdx] = np.linalg.norm(facesBarycenters[self.centralFaceIdx] - facesBarycenters[faceIdx])
+
         sigma = max(facesDists.values())
 
         #Normal tensor voting
-        for ring in self.rings:
-            for faceIdx in ring:
-                faceNormal = np.matrix(np.array(bmeshObj.faces[faceIdx].normal)).T #Transforming the face normal into a vector
-                faceWeight = (bmeshObj.faces[faceIdx].calc_area() / maxFaceSize) * math.exp(-facesDists[faceIdx]/sigma)
-                normalsConvMat += faceWeight * (faceNormal @ faceNormal.T)
+        for faceIdx in self.getFacesIterator():
+            faceNormal = np.matrix(np.array(bmeshObj.faces[faceIdx].normal)).T #Transforming the face normal into a vector
+            faceWeight = (bmeshObj.faces[faceIdx].calc_area() / maxFaceSize) * math.exp(-facesDists[faceIdx]/sigma)
+            normalsConvMat += faceWeight * (faceNormal @ faceNormal.T)
 
         self.eigenVals, self.eigenVecs = np.linalg.eig(normalsConvMat)
+
+    def getFacesIterator(self):
+        """
+        Returns an iterator to iterate over all faces of the patch in one loop
+        """
+        return itertools.chain.from_iterable(self.rings)
