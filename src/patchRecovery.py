@@ -3,9 +3,12 @@ import bpy
 import bmesh
 import sys
 import time
+import math
 #To compress mesh data files efficiently
 import pickle
 import lzma
+
+from PIL import Image
 
 import hashlib
 import numpy as np
@@ -85,8 +88,58 @@ if len(meshPatches) == 0:
     print("Done")
 
 #Test to invert a patch position
-patchConsidered = meshPatches[0]
-rotMatInv = np.linalg.inv(np.matrix(patchConsidered.eigenVecs).T)
-for faceIdx in patchConsidered.getFacesIterator():
-    bm.faces[faceIdx].select = True
-bm.faces[patchConsidered.centralFaceIdx].select = False
+patchConsidered = meshPatches[100]
+
+centralVecPos = patchConsidered.getFaceBarycenter(bm.faces[patchConsidered.centralFaceIdx])
+vertsId = patchConsidered.getVerticesIdx(bm)
+unrotatedVertsPos = {}
+for vertId in vertsId:
+    unrotatedVertsPos[vertId] = patchConsidered.normalizePosition(bm, np.array(bm.verts[vertId].co), True)
+    
+##Logic to sample patch normals
+
+samplerRes = 8 #Square root of the number of samples to be taken from the normals
+
+#Getting the BBox of the unrotated patch
+BBoxSize = []
+zipdCoords = zip(*unrotatedVertsPos.values())
+for i in zipdCoords:
+    BBoxSize.append((max(i) - min(i)).item(0))
+#Building the plane vectors
+planeVecs = np.diag(BBoxSize)
+
+#Projecting the faces to the plane
+normalizedFaceCoords = {}
+normalizedNormals = {}
+for faceIdx in patchConsidered.getFacesIdxIterator():
+    normalizedFaceCoords[faceIdx] = patchConsidered.normalizePosition(bm, patchConsidered.getFaceBarycenter(bm.faces[faceIdx]), True)
+    normalizedNormals[faceIdx] = patchConsidered.normalizePosition(bm, np.array(bm.faces[faceIdx].normal), False)
+
+def getSampleToFacePlaneDist(sampleCoords, faceIdxNp):
+    i = sampleCoords%samplerRes
+    j = (sampleCoords-i)/samplerRes
+    i = (i*2 - (samplerRes-1))/samplerRes
+    j = (j*2 - (samplerRes-1))/samplerRes
+    faceIdx = faceIdxNp[0]
+    sampleFaceCoords = planeVecs[1] * i + planeVecs[2] * j
+    return abs(np.dot(normalizedNormals[faceIdx], sampleFaceCoords - normalizedFaceCoords[faceIdx]))
+
+#Sampling the unrotated normal values from the patch
+sampledVals = [[np.zeros((3,1)) for j in range(samplerRes)] for i in range(samplerRes)]
+facesIdx = [[faceIdx] for faceIdx in patchConsidered.getFacesIdxIterator()]
+K = 3 #Number of closest faces to take into account
+for i in range(samplerRes):
+    for j in range(samplerRes):
+        #Finding the K closest faces to the sample, and adding their normals together
+        distVec = cdist([[i+j*samplerRes]], facesIdx, metric = getSampleToFacePlaneDist)[0]
+        sortedDistIdx = distVec.argsort()
+        totalWeights = 0.0
+        normApprox = np.array([0.0,0.0,0.0])
+        for i in range(K):
+            idx = sortedDistIdx[i]
+            faceIdx = facesIdx[idx][0]
+            dist = distVec[idx]
+            weight = math.exp(-dist)
+            totalWeights += weight
+            normApprox += weight * normalizedNormals[faceIdx]
+        normApprox = normApprox / totalWeights

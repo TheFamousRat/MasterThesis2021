@@ -27,9 +27,6 @@ class Patch:
 
         self.__calculatePatchEigenValues(bmeshObj)
 
-    def __getFaceBarycenter(self, bmeshObj, faceIdx):
-        return np.array(bmeshObj.faces[faceIdx].calc_center_median_weighted())
-
     def __calculatePatchEigenValues(self, bmeshObj):
         #Extracting the eigenvalues from the patch's normals' correlation matrix. Used to compare patches between each other
         normalsConvMat = np.zeros((3,3))
@@ -40,26 +37,48 @@ class Patch:
         sigma = 0.0
         facesDists = {}
 
-        for faceIdx in self.getFacesIterator():
+        for faceIdx in self.getFacesIdxIterator():
             #Calculating the max face area, to normalize face areas later
             maxFaceSize = max(maxFaceSize, bmeshObj.faces[faceIdx].calc_area())
             #Baking faces barycenters
-            facesBarycenters[faceIdx] = np.array(bmeshObj.faces[faceIdx].calc_center_median_weighted())
+            facesBarycenters[faceIdx] = self.getFaceBarycenter(bmeshObj.faces[faceIdx])
             #Finding the largest distance between the central face and a triangle barycenter
             facesDists[faceIdx] = np.linalg.norm(facesBarycenters[self.centralFaceIdx] - facesBarycenters[faceIdx])
 
         sigma = max(facesDists.values())
 
         #Normal tensor voting
-        for faceIdx in self.getFacesIterator():
+        for faceIdx in self.getFacesIdxIterator():
             faceNormal = np.matrix(np.array(bmeshObj.faces[faceIdx].normal)).T #Transforming the face normal into a vector
             faceWeight = (bmeshObj.faces[faceIdx].calc_area() / maxFaceSize) * math.exp(-facesDists[faceIdx]/sigma)
             normalsConvMat += faceWeight * (faceNormal @ faceNormal.T)
 
         self.eigenVals, self.eigenVecs = np.linalg.eig(normalsConvMat)
+        self.rotMat = np.matrix(self.eigenVecs)
+        self.rotMatInv = np.linalg.inv(self.rotMat)
 
-    def getFacesIterator(self):
+    def getFacesIdxIterator(self):
         """
         Returns an iterator to iterate over all faces of the patch in one loop
         """
         return itertools.chain.from_iterable(self.rings)
+
+    def getVerticesIdx(self, bmeshObj):
+        """
+        Returns a list of the indices of vertices forming the patch
+        """
+        ret = set()
+        for faceIdx in self.getFacesIdxIterator():
+            for vert in bmeshObj.faces[faceIdx].verts:
+                ret.add(vert.index)
+        return ret
+
+    def getFaceBarycenter(self, face):
+        return np.array(face.calc_center_median())
+
+    def normalizePosition(self, bmeshObj, pos, isGlobalPos):
+        """
+        Returns the transformed position (unrotated and centered if global) of a given vector pos
+        """
+        centeredPos = pos - (self.getFaceBarycenter(bmeshObj.faces[self.centralFaceIdx]) if isGlobalPos else np.array([0,0,0]))
+        return np.asarray(self.rotMatInv @ np.matrix(centeredPos).T).reshape(-1)
