@@ -21,9 +21,11 @@ for pathToAdd in pathsToAdd:
     sys.path.append(pathToAdd)
 
 import Patch
+import debugDrawingBlender
 
 import importlib
 importlib.reload(Patch)
+importlib.reload(debugDrawingBlender)
 
 for pathToAdd in pathsToAdd:
     sys.path.remove(pathToAdd)
@@ -49,6 +51,8 @@ if selectedObj.type != "MESH":
     raise Exception("Please choose a mesh")
     
 bm = bmesh.from_edit_mesh(selectedObj.data)
+bm.verts.ensure_lookup_table()
+bm.edges.ensure_lookup_table()
 bm.faces.ensure_lookup_table()
 
 #Storage for mesh data
@@ -87,59 +91,81 @@ if len(meshPatches) == 0:
         pickle.dump(meshPatches, f)
     print("Done")
 
-#Test to invert a patch position
-patchConsidered = meshPatches[100]
+##Test to invert a patch position
+gp_layer = debugDrawingBlender.init_grease_pencil()
+gp_frame = gp_layer.frames.new(0)
+lineSize = 0.02
+
+#Operation supposed to take place within a patch's class, so we take an arbitraty one
+patchConsidered = meshPatches[4765]
 
 centralVecPos = patchConsidered.getFaceBarycenter(bm.faces[patchConsidered.centralFaceIdx])
-vertsId = patchConsidered.getVerticesIdx(bm)
-unrotatedVertsPos = {}
-for vertId in vertsId:
-    unrotatedVertsPos[vertId] = patchConsidered.normalizePosition(bm, np.array(bm.verts[vertId].co), True)
-    
+
+#Calculating the approximate curvature tensor for the patch
+def debugDrawTensors():
+    for patch in meshPatches:
+        centralVecPos = patch.getFaceBarycenter(bm.faces[patch.centralFaceIdx])
+        #eigenVals, eigenVecs = np.linalg.eig(patch.computeCurvatureTensor(bm))
+
+        for i in range(3):
+            debugDrawingBlender.draw_line(gp_frame, centralVecPos, centralVecPos + lineSize * patch.eigenVecs[:,i])
+
+def prout():
+    vertsId = patchConsidered.getVerticesIdx(bm)
+    unrotatedVertsPos = {}
+    for vertId in vertsId:
+        unrotatedVertsPos[vertId] = rotMatInv @ (np.array(bm.verts[vertId].co) - centralVecPos)
+        
+    for vertId in vertsId:
+        bm.verts[vertId].co = unrotatedVertsPos[vertId]
+    bmesh.update_edit_mesh(selectedObj.data)
+
+#prout()
+
 ##Logic to sample patch normals
+def testNormalSampling():
+    samplerRes = 8 #Square root of the number of samples to be taken from the normals
 
-samplerRes = 8 #Square root of the number of samples to be taken from the normals
+    #Getting the BBox of the unrotated patch
+    BBoxSize = []
+    zipdCoords = zip(*unrotatedVertsPos.values())
+    for i in zipdCoords:
+        BBoxSize.append((max(i) - min(i)).item(0))
+    #Building the plane vectors
+    planeVecs = np.diag(BBoxSize)
 
-#Getting the BBox of the unrotated patch
-BBoxSize = []
-zipdCoords = zip(*unrotatedVertsPos.values())
-for i in zipdCoords:
-    BBoxSize.append((max(i) - min(i)).item(0))
-#Building the plane vectors
-planeVecs = np.diag(BBoxSize)
+    #Projecting the faces to the plane
+    normalizedFaceCoords = {}
+    normalizedNormals = {}
+    for faceIdx in patchConsidered.getFacesIdxIterator():
+        normalizedFaceCoords[faceIdx] = patchConsidered.normalizePosition(bm, patchConsidered.getFaceBarycenter(bm.faces[faceIdx]), True)
+        normalizedNormals[faceIdx] = patchConsidered.normalizePosition(bm, np.array(bm.faces[faceIdx].normal), False)
 
-#Projecting the faces to the plane
-normalizedFaceCoords = {}
-normalizedNormals = {}
-for faceIdx in patchConsidered.getFacesIdxIterator():
-    normalizedFaceCoords[faceIdx] = patchConsidered.normalizePosition(bm, patchConsidered.getFaceBarycenter(bm.faces[faceIdx]), True)
-    normalizedNormals[faceIdx] = patchConsidered.normalizePosition(bm, np.array(bm.faces[faceIdx].normal), False)
+    def getSampleToFacePlaneDist(sampleCoords, faceIdxNp):
+        i = sampleCoords%samplerRes
+        j = (sampleCoords-i)/samplerRes
+        i = (i*2 - (samplerRes-1))/samplerRes
+        j = (j*2 - (samplerRes-1))/samplerRes
+        faceIdx = faceIdxNp[0]
+        sampleFaceCoords = planeVecs[1] * i + planeVecs[2] * j
+        return abs(np.dot(normalizedNormals[faceIdx], sampleFaceCoords - normalizedFaceCoords[faceIdx]))
 
-def getSampleToFacePlaneDist(sampleCoords, faceIdxNp):
-    i = sampleCoords%samplerRes
-    j = (sampleCoords-i)/samplerRes
-    i = (i*2 - (samplerRes-1))/samplerRes
-    j = (j*2 - (samplerRes-1))/samplerRes
-    faceIdx = faceIdxNp[0]
-    sampleFaceCoords = planeVecs[1] * i + planeVecs[2] * j
-    return abs(np.dot(normalizedNormals[faceIdx], sampleFaceCoords - normalizedFaceCoords[faceIdx]))
-
-#Sampling the unrotated normal values from the patch
-sampledVals = [[np.zeros((3,1)) for j in range(samplerRes)] for i in range(samplerRes)]
-facesIdx = [[faceIdx] for faceIdx in patchConsidered.getFacesIdxIterator()]
-K = 3 #Number of closest faces to take into account
-for i in range(samplerRes):
-    for j in range(samplerRes):
-        #Finding the K closest faces to the sample, and adding their normals together
-        distVec = cdist([[i+j*samplerRes]], facesIdx, metric = getSampleToFacePlaneDist)[0]
-        sortedDistIdx = distVec.argsort()
-        totalWeights = 0.0
-        normApprox = np.array([0.0,0.0,0.0])
-        for i in range(K):
-            idx = sortedDistIdx[i]
-            faceIdx = facesIdx[idx][0]
-            dist = distVec[idx]
-            weight = math.exp(-dist)
-            totalWeights += weight
-            normApprox += weight * normalizedNormals[faceIdx]
-        normApprox = normApprox / totalWeights
+    #Sampling the unrotated normal values from the patch
+    sampledVals = [[np.zeros((3,1)) for j in range(samplerRes)] for i in range(samplerRes)]
+    facesIdx = [[faceIdx] for faceIdx in patchConsidered.getFacesIdxIterator()]
+    K = 3 #Number of closest faces to take into account
+    for i in range(samplerRes):
+        for j in range(samplerRes):
+            #Finding the K closest faces to the sample, and adding their normals together
+            distVec = cdist([[i+j*samplerRes]], facesIdx, metric = getSampleToFacePlaneDist)[0]
+            sortedDistIdx = distVec.argsort()
+            totalWeights = 0.0
+            normApprox = np.array([0.0,0.0,0.0])
+            for i in range(K):
+                idx = sortedDistIdx[i]
+                faceIdx = facesIdx[idx][0]
+                dist = distVec[idx]
+                weight = math.exp(-dist)
+                totalWeights += weight
+                normApprox += weight * normalizedNormals[faceIdx]
+            normApprox = normApprox / totalWeights
