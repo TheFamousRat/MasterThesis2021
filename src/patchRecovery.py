@@ -92,23 +92,66 @@ if len(meshPatches) == 0:
     print("Done")
 
 ##Test to invert a patch position
-gp_layer = debugDrawingBlender.init_grease_pencil()
+gpencil, gp_layer = debugDrawingBlender.init_grease_pencil()
+gp_layer.clear()
 gp_frame = gp_layer.frames.new(0)
-lineSize = 0.02
+lineSize = 0.005
 
 #Operation supposed to take place within a patch's class, so we take an arbitraty one
-patchConsidered = meshPatches[4765]
+patchConsidered = meshPatches[1160]
 
 centralVecPos = patchConsidered.getFaceBarycenter(bm.faces[patchConsidered.centralFaceIdx])
+
+import scipy.linalg as la
+
+###
+
+#Plane characteristics
+for patch in meshPatches:
+    planeNormal = patch.eigenVecs[:,2]
+    planeOrigin = patch.getFaceBarycenter(bm.faces[patch.centralFaceIdx])
+    e1 = patch.eigenVecs[:,0]
+    e2 = patch.eigenVecs[:,1]
+    bm.faces[patch.centralFaceIdx].select = True
+
+    #Projecting a vert from the patch onto the plane
+    X = np.array([0.0, 0.0, 0.0])
+    Y = np.array([0.0])
+    for vertIdx in patch.getVerticesIdx(bm):
+        #Projecting the vertex
+        vert = bm.verts[vertIdx]
+        vert.select = True
+        initialPos = np.array(vert.co)
+        t = np.dot(planeNormal, initialPos - planeOrigin)
+        vertProj = initialPos - planeNormal * t
+        #Getting its UV coordinates
+        u = np.dot(e1, vertProj - planeOrigin)
+        v = np.dot(e2, vertProj - planeOrigin)
+        #And registering it into a matrix for regression afterwards
+        X = np.vstack([X, 0.5 * np.array([u*u/2.0, v*v/2.0, u*v])])
+        Y = np.vstack([Y, np.array([t])])
+        debugDrawingBlender.draw_line(gpencil, gp_frame, initialPos, vertProj,  "ff0000")
+
+    beta, res, rk, s = np.linalg.lstsq(X,Y)
+    dir = beta[1] * e1 + beta[2] * e2
+    dir = (dir / np.linalg.norm(dir)) * 0.01
+    break
+    
+###
 
 #Calculating the approximate curvature tensor for the patch
 def debugDrawTensors():
     for patch in meshPatches:
         centralVecPos = patch.getFaceBarycenter(bm.faces[patch.centralFaceIdx])
-        #eigenVals, eigenVecs = np.linalg.eig(patch.computeCurvatureTensor(bm))
-
+        #eigenVals, eigenVecs = la.eigh(patch.computeCurvatureTensor(bm))
+        #print(patch.eigenVals)
+        
+        axisColors = ["ff0000", "00ff00", "0000ff"]
+        
         for i in range(3):
-            debugDrawingBlender.draw_line(gp_frame, centralVecPos, centralVecPos + lineSize * patch.eigenVecs[:,i])
+            eigenVecDir = lineSize * patch.eigenVecs[:,i]
+            debugDrawingBlender.draw_line(gpencil, gp_frame, centralVecPos, centralVecPos + eigenVecDir,  axisColors[i])
+#debugDrawTensors()
 
 def prout():
     vertsId = patchConsidered.getVerticesIdx(bm)

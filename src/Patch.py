@@ -90,9 +90,9 @@ class Patch:
             normalVec = bmeshObj.faces[faceIdx].normal
             normalVec = normalVec / np.linalg.norm(normalVec)
             faceNormal = np.matrix(np.array(normalVec)).T #Transforming the face normal into a vector
-            normalsConvMat += self.faceWeights[faceIdx] * (faceNormal @ faceNormal.T)
+            normalsConvMat += (faceNormal @ faceNormal.T) * bmeshObj.faces[faceIdx].calc_area()# * self.faceWeights[faceIdx]
 
-        self.eigenVals, self.eigenVecs = la.eig(normalsConvMat)
+        self.eigenVals, self.eigenVecs = la.eigh(normalsConvMat)
         self.rotMatInv = np.linalg.inv(self.eigenVecs)
     
     def getFacesIdxIterator(self):

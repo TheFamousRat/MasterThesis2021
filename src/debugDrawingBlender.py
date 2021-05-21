@@ -50,9 +50,30 @@ def init_grease_pencil(gpencil_obj_name='GPencil', gpencil_layer_name='GP_Layer'
                        clear_layer=True) -> bpy.types.GPencilLayer:
     gpencil = get_grease_pencil(gpencil_obj_name)
     gpencil_layer = get_grease_pencil_layer(gpencil, gpencil_layer_name, clear_layer=clear_layer)
-    return gpencil_layer
+    return gpencil, gpencil_layer
 
-def draw_line(gp_frame, p0: tuple, p1: tuple):
+def getGPColorMaterialIdx(gpencil, colorHex):
+    """
+    Returns a found or created stroke material with the RGB color corresponding to the given HEX code
+    """
+    shaderName = "GP_{}".format(colorHex)
+    if not shaderName in bpy.data.materials:
+        newMat = bpy.data.materials.new(shaderName)
+        bpy.data.materials.create_gpencil_data(newMat)
+        rgb = tuple(int(colorHex[i:i+2], 16) for i in (0, 2, 4))
+        
+        for i in range(3):
+            newMat.grease_pencil.color[i] = rgb[i]
+        newMat.grease_pencil.color[3] = 1
+
+    gpMat = bpy.data.materials[shaderName]
+
+    if not gpMat.name in gpencil.data.materials:
+        gpencil.data.materials.append(gpMat)
+
+    return gpencil.material_slots.find(gpMat.name)
+
+def draw_line(gpencil, gp_frame, p0: tuple, p1: tuple, colorHex):
     # Init new stroke
     gp_stroke = gp_frame.strokes.new()
     gp_stroke.display_mode = '3DSPACE'  # allows for editing
@@ -61,4 +82,8 @@ def draw_line(gp_frame, p0: tuple, p1: tuple):
     gp_stroke.points.add(count=2)
     gp_stroke.points[0].co = p0
     gp_stroke.points[1].co = p1
+
+    #Getting (creating) a material corresponding to the required color
+    gp_stroke.material_index = getGPColorMaterialIdx(gpencil, colorHex)
+
     return gp_stroke
