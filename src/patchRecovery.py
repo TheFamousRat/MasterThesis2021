@@ -40,6 +40,9 @@ for pathToAdd in pathsToAdd:
 
 ###Constants
 RINGS_NUM = 2 #Number of rings around the central face to take into the patch
+#Used in the process of "correcting" the eigenvectors' signs
+COLUMNS_SIGN_MODIFIED = 2
+NUMBER_OF_SIGN_COMBINATION = 2**COLUMNS_SIGN_MODIFIED
 
 ##GPencil debug drawing global variables
 gpencil, gp_layer = debugDrawing.init_grease_pencil()
@@ -54,10 +57,13 @@ def getMeshHash(obj):
     
 def createFacePatch(bmeshObj, face):
     return Patch.Patch(bmeshObj, face.index, RINGS_NUM)
-
-def getPatchesSimilarity(patch1Idx, patch2Idx, patchArr):
-    return pow(np.linalg.norm(patch1.eigenVals - patch2.eigenVals), 2.0)
     
+def intToSignedBitList(val, bitsAmount):
+    """
+    Takes an int as parameter and converts it to a signed bit list (True = -1, False = 1) of size bitsAmount
+    """
+    return [1-2*bool(val & (1<<j)) for j in range(bitsAmount)]
+
 ###Body
 #Creating the bmesh
 selectedObj = bpy.context.active_object
@@ -108,75 +114,111 @@ if len(meshPatches) == 0:
 
 ##Correcting the patches' orthogonal basis signs
 #Pairing the patches together as a ref and uncorrected patch couple
-from sklearn.metrics import pairwise_distances_argmin_min
+def createPatchCorrectionChain():
+    from sklearn.metrics import pairwise_distances_argmin_min
 
-dataArr = np.array([patch.eigenVals / np.linalg.norm(patch.eigenVals) for patch in meshPatches])
-correctedPatches = []
-uncorrectedPatches = list(range(len(dataArr)))
-refPatchPairs = []
-
-start = time.time()
-
-#Picking an arbitrary patch : the directions of his orthogonal basis are defined as a correct reference
-startingPatchIdx = 4150
-
-correctedPatches.append(startingPatchIdx)
-uncorrectedPatches.remove(startingPatchIdx)
-closestPoints, closestDists = pairwise_distances_argmin_min(dataArr[correctedPatches], dataArr[uncorrectedPatches])
-
-bar = Bar('Building patch connectivity map', suffix='%(percent).1f%% - %(eta)ds', max=len(uncorrectedPatches) - 1)
-while len(uncorrectedPatches) > 1:
-    ##Find the closest uncorrected patch and its ref patch
-    closestRelationId = np.argmin(closestDists)
-    refPatchIdx = correctedPatches[closestRelationId]
-    patchToCorrectIdx = closestPoints[closestRelationId]
-    refPatchPairs.append((refPatchIdx, patchToCorrectIdx))
-    uncorrectedPatches.remove(patchToCorrectIdx)
-    ##Creating a new row for the new patch, with empty data
-    closestPoints = np.append(closestPoints, -1)
-    closestDists = np.append(closestDists, 0.0)
-    correctedPatches.append(patchToCorrectIdx)
-    #print("Closest ref : {}, closest uncorrected patch : {} (remaining uncorrected patches : {})".format(refPatchIdx, patchToCorrectIdx, len(uncorrectedPatches)))
-    ##Finding nearest neighbours for the corrected points that used to have the new point as their nearest neighbour
-    #Locating the patches with refPatchIdx as their nearest neighbour
-    patchesObsNearstNeighbPos = np.where(closestPoints == patchToCorrectIdx)[0]
-    patchesObsNearstNeighbPos = np.append(patchesObsNearstNeighbPos, len(correctedPatches)-1)
-    patchesObsNearstNeighbIdx = np.array(correctedPatches)[patchesObsNearstNeighbPos]
-    #Finding new nearest neighbours of those patches, registering the relevant statistics
-    newPatchClosestPoints, newPatchClosestDists = pairwise_distances_argmin_min(dataArr[patchesObsNearstNeighbIdx], dataArr[uncorrectedPatches])
-    for i in range(len(patchesObsNearstNeighbPos)):
-        closestPoints[patchesObsNearstNeighbPos[i]] = uncorrectedPatches[newPatchClosestPoints[i]]
-        closestDists[patchesObsNearstNeighbPos[i]] = newPatchClosestDists[i]
-    bar.next()
-
-refPatchPairs.append((correctedPatches[np.argmin(closestDists)], uncorrectedPatches[0]))
-
-end = time.time()
-
-print("Total time : ", end - start)
-
-print(refPatchPairs[0])
-
-
-def patchesAxisSignMatching(patchRef, patchToMatch):
-    vertices1Pos = patchRef.getVerticesPos(bm)
-    vertices2Pos = patchToMatch.getVerticesPos(bm)
-
-    from scipy.spatial.distance import cdist
-    from scipy.optimize import linear_sum_assignment
+    dataArr = np.array([patch.eigenVals / np.linalg.norm(patch.eigenVals) for patch in meshPatches])
+    correctedPatches = []
+    uncorrectedPatches = list(range(len(dataArr)))
+    refPatchPairs = []
 
     start = time.time()
 
-    for i in range(8):
-        signsList = [1-2*bool(i & (1<<j)) for j in range(3)] #Signs of the columns that we will switch
-        
+    #Picking an arbitrary patch : the directions of his orthogonal basis are defined as a correct reference
+    startingPatchIdx = 4150
 
-    d = cdist(vertices1Pos, vertices2Pos)
-    assignment = linear_sum_assignment(d)
-    d[assignment].sum() / len(d[assignment])
+    correctedPatches.append(startingPatchIdx)
+    uncorrectedPatches.remove(startingPatchIdx)
+    closestPoints, closestDists = pairwise_distances_argmin_min(dataArr[correctedPatches], dataArr[uncorrectedPatches])
+
+    bar = Bar('Building patch connectivity map', suffix='%(percent).1f%%', max=len(uncorrectedPatches) - 1)
+    while len(uncorrectedPatches) > 1:
+        ##Find the closest uncorrected patch and its ref patch
+        closestRelationId = np.argmin(closestDists)
+        refPatchIdx = correctedPatches[closestRelationId]
+        patchToCorrectIdx = closestPoints[closestRelationId]
+        refPatchPairs.append((refPatchIdx, patchToCorrectIdx))
+        uncorrectedPatches.remove(patchToCorrectIdx)
+        ##Creating a new row for the new patch, with empty data
+        closestPoints = np.append(closestPoints, -1)
+        closestDists = np.append(closestDists, 0.0)
+        correctedPatches.append(patchToCorrectIdx)
+        #print("Closest ref : {}, closest uncorrected patch : {} (remaining uncorrected patches : {})".format(refPatchIdx, patchToCorrectIdx, len(uncorrectedPatches)))
+        ##Finding nearest neighbours for the corrected points that used to have the new point as their nearest neighbour
+        #Locating the patches with refPatchIdx as their nearest neighbour
+        patchesObsNearstNeighbPos = np.where(closestPoints == patchToCorrectIdx)[0]
+        patchesObsNearstNeighbPos = np.append(patchesObsNearstNeighbPos, len(correctedPatches)-1)
+        patchesObsNearstNeighbIdx = np.array(correctedPatches)[patchesObsNearstNeighbPos]
+        #Finding new nearest neighbours of those patches, registering the relevant statistics
+        newPatchClosestPoints, newPatchClosestDists = pairwise_distances_argmin_min(dataArr[patchesObsNearstNeighbIdx], dataArr[uncorrectedPatches])
+        for i in range(len(patchesObsNearstNeighbPos)):
+            closestPoints[patchesObsNearstNeighbPos[i]] = uncorrectedPatches[newPatchClosestPoints[i]]
+            closestDists[patchesObsNearstNeighbPos[i]] = newPatchClosestDists[i]
+        bar.next()
+
+    refPatchPairs.append((correctedPatches[np.argmin(closestDists)], uncorrectedPatches[0]))
 
     end = time.time()
-    print("Time taken : {} seconds".format(end - start))
+
+    print("Total time : ", end - start)
+    
+    return refPatchPairs
+
+refPatchChain = createPatchCorrectionChain()
+
+from scipy.spatial.distance import cdist
+from scipy.optimize import linear_sum_assignment
+
+def patchesAxisSignMatching(patchRef, patchToCorrect):
+    vertices1Pos = patchRef.getVerticesPos(bm)
+    patch1RefPos = patchRef.getFaceBarycenter(bm.faces[patchRef.centralFaceIdx])
+    #Transforming the vertices position for patchRef
+    vertices1Pos = (patchRef.rotMatInv @ (vertices1Pos - patch1RefPos).T).T
+    
+    vertices2Pos = patchToCorrect.getVerticesPos(bm)
+    patch2RefPos = patchToCorrect.getFaceBarycenter(bm.faces[patchToCorrect.centralFaceIdx])
+    #Centering the vertices of patch to correct
+    vertices2Pos = vertices2Pos - patch2RefPos
+    
+    matchingResults = []
+    for i in range(NUMBER_OF_SIGN_COMBINATION):
+        signsList = intToSignedBitList(i, COLUMNS_SIGN_MODIFIED) #Signs of the columns that we will switch
+        mat = np.copy(patchToCorrect.eigenVecs)
+        #Applying the sign changes
+        for colId in range(COLUMNS_SIGN_MODIFIED):
+            mat[:,colId] = signsList[colId] * mat[:,colId]
+        
+        #Transforming the vertices
+        rotMatInv = np.linalg.inv(mat)
+        vertices2PosTransformed = (rotMatInv @ vertices2Pos.T).T
+        
+        #Measuring the difference between the transformed patches
+        d = cdist(vertices1Pos, vertices2PosTransformed)
+        assignment = linear_sum_assignment(d)
+        matchingResults.append(d[assignment].sum() / len(d[assignment]))
+    
+    bestCombinationIdx = np.argmin(matchingResults)
+    signsList = intToSignedBitList(bestCombinationIdx, COLUMNS_SIGN_MODIFIED)
+    for colId in range(COLUMNS_SIGN_MODIFIED):
+        patchToCorrect.eigenVecs[:,colId] = signsList[colId] * patchToCorrect.eigenVecs[:,colId]
+    
+print("Starting to correct the patches' signs...")
+
+start = time.time()
+
+for couple in refPatchChain:
+    patchesAxisSignMatching(meshPatches[couple[0]], meshPatches[couple[1]])
+
+end = time.time()
+print("Time taken : {} seconds".format(end - start))
+
+print("Drawing the patches")
+for patch in meshPatches:
+    patchCentralPos = patch.getFaceBarycenter(bm.faces[patch.centralFaceIdx])
+    for i in range(3):
+        dir = patch.eigenVecs[:,i]
+        debugDrawing.draw_line(gpencil, gp_frame, (patchCentralPos, patchCentralPos + lineSize * dir), (0.5, 3.0), axisColors[i])
+
 
 #Plane characteristics
 def principalCurvatureCalc():
