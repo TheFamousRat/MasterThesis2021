@@ -18,6 +18,8 @@ import hashlib
 #Scikit suite
 import numpy as np
 from scipy.spatial.distance import cdist
+from sklearn.metrics import pairwise_distances_argmin_min
+from scipy.optimize import linear_sum_assignment
 #Show progress bar utility
 from progress.bar import Bar
 
@@ -55,8 +57,8 @@ axisColors = ["ff0000", "00ff00", "0000ff"] #Colors of the XYZ axis
 def getMeshHash(obj):
     return hashlib.sha224( str(obj.data.vertices).strip('[]').encode('utf-8') ).hexdigest()
     
-def createFacePatch(bmeshObj, face):
-    return Patch.Patch(bmeshObj, face.index, RINGS_NUM)
+def createVertexPatch(bmeshObj, vertex):
+    return Patch.Patch(bmeshObj, vertex.index, RINGS_NUM)
     
 def intToSignedBitList(val, bitsAmount):
     """
@@ -90,7 +92,7 @@ if os.path.exists(patchesDataPath):
     with lzma.open(patchesDataPath, 'rb') as f:
         meshPatches = pickle.load(f)  
     print("Checking integrity...")
-    patchRef = createFacePatch(bm, bm.faces[0])
+    patchRef = createVertexPatch(bm, bm.verts[0])
     patchBaked = meshPatches[0]
     if pickle.dumps(patchRef) != pickle.dumps(patchBaked):
         print("Outdaded or invalid baked patches found, rebuilding all patches")
@@ -102,8 +104,8 @@ if len(meshPatches) == 0:
     #Patches not found, baking them
     print("Building patches for the mesh")
     start = time.time()
-    for face in bm.faces:
-        meshPatches.append(createFacePatch(bm, face))
+    for vert in bm.verts:
+        meshPatches.append(createVertexPatch(bm, vert))
 
     end = time.time()
     print("Time taken : {} seconds".format(end - start))
@@ -115,8 +117,6 @@ if len(meshPatches) == 0:
 ##Correcting the patches' orthogonal basis signs
 #Pairing the patches together as a ref and uncorrected patch couple
 def createPatchCorrectionChain():
-    from sklearn.metrics import pairwise_distances_argmin_min
-
     dataArr = np.array([patch.eigenVals / np.linalg.norm(patch.eigenVals) for patch in meshPatches])
     correctedPatches = []
     uncorrectedPatches = list(range(len(dataArr)))
@@ -166,17 +166,14 @@ def createPatchCorrectionChain():
 
 refPatchChain = createPatchCorrectionChain()
 
-from scipy.spatial.distance import cdist
-from scipy.optimize import linear_sum_assignment
-
 def patchesAxisSignMatching(patchRef, patchToCorrect):
     vertices1Pos = patchRef.getVerticesPos(bm)
-    patch1RefPos = patchRef.getFaceBarycenter(bm.faces[patchRef.centralFaceIdx])
+    patch1RefPos = patchRef.getCentralPos(bm)
     #Transforming the vertices position for patchRef
     vertices1Pos = (patchRef.rotMatInv @ (vertices1Pos - patch1RefPos).T).T
     
     vertices2Pos = patchToCorrect.getVerticesPos(bm)
-    patch2RefPos = patchToCorrect.getFaceBarycenter(bm.faces[patchToCorrect.centralFaceIdx])
+    patch2RefPos = patchToCorrect.getCentralPos(bm)
     #Centering the vertices of patch to correct
     vertices2Pos = vertices2Pos - patch2RefPos
     
@@ -187,20 +184,21 @@ def patchesAxisSignMatching(patchRef, patchToCorrect):
         #Applying the sign changes
         for colId in range(COLUMNS_SIGN_MODIFIED):
             mat[:,colId] = signsList[colId] * mat[:,colId]
-        
+        print(mat)
         #Transforming the vertices
         rotMatInv = np.linalg.inv(mat)
         vertices2PosTransformed = (rotMatInv @ vertices2Pos.T).T
         
         #Measuring the difference between the transformed patches
-        d = cdist(vertices1Pos, vertices2PosTransformed)
-        assignment = linear_sum_assignment(d)
-        matchingResults.append(d[assignment].sum() / len(d[assignment]))
+        closestPoints, closestDists = pairwise_distances_argmin_min(vertices2PosTransformed, vertices1Pos, metric = 'sqeuclidean')
+        matchingResults.append(closestDists.sum())
     
-    bestCombinationIdx = np.argmin(matchingResults)
+    bestCombinationIdx = 3#np.argmin(matchingResults)
     signsList = intToSignedBitList(bestCombinationIdx, COLUMNS_SIGN_MODIFIED)
+    print(matchingResults)
     for colId in range(COLUMNS_SIGN_MODIFIED):
         patchToCorrect.eigenVecs[:,colId] = signsList[colId] * patchToCorrect.eigenVecs[:,colId]
+    patchToCorrect.rotMatInv = np.linalg.inv(patchToCorrect.eigenVecs)
     
 print("Starting to correct the patches' signs...")
 
@@ -209,12 +207,13 @@ start = time.time()
 for couple in refPatchChain:
     patchesAxisSignMatching(meshPatches[couple[0]], meshPatches[couple[1]])
 
+
 end = time.time()
 print("Time taken : {} seconds".format(end - start))
 
-print("Drawing the patches")
+print("Drawing the patches' eigenvectors")
 for patch in meshPatches:
-    patchCentralPos = patch.getFaceBarycenter(bm.faces[patch.centralFaceIdx])
+    patchCentralPos = patch.getCentralPos(bm)
     for i in range(3):
         dir = patch.eigenVecs[:,i]
         debugDrawing.draw_line(gpencil, gp_frame, (patchCentralPos, patchCentralPos + lineSize * dir), (0.5, 3.0), axisColors[i])
@@ -224,10 +223,9 @@ for patch in meshPatches:
 def principalCurvatureCalc():
     for patch in meshPatches:
         planeNormal = patch.eigenVecs[:,2]
-        planeOrigin = patch.getFaceBarycenter(bm.faces[patch.centralFaceIdx])
+        planeOrigin = patch.getCentralPos(bm)
         e1 = patch.eigenVecs[:,0]
         e2 = patch.eigenVecs[:,1]
-        bm.faces[patch.centralFaceIdx].select = True
 
         #Projecting a vert from the patch onto the plane
         X = np.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0])
@@ -258,13 +256,11 @@ def principalCurvatureCalc():
 
 def unrotateMeshPatch(patch_):
     vertsId = patch_.getVerticesIdx(bm)
-    centralFacePos_ = patch_.getFaceBarycenter(bm.faces[patch_.centralFaceIdx])
+    centralPos_ = patch_.getCentralPos(bm)
     unrotatedVertsPos = {}
     for vertId in vertsId:
-        unrotatedVertsPos[vertId] = patch_.rotMatInv @ (np.array(bm.verts[vertId].co) - centralFacePos_)
+        unrotatedVertsPos[vertId] = patch_.rotMatInv @ (np.array(bm.verts[vertId].co) - centralPos_)
         
     for vertId in vertsId:
         bm.verts[vertId].co = unrotatedVertsPos[vertId]
     bmesh.update_edit_mesh(selectedObj.data)
-
-#unrotateMeshPatch(patchConsidered)

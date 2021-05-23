@@ -4,22 +4,22 @@ import scipy.linalg as la
 import itertools
 
 class Patch:
-    def __init__(self, bmeshObj, centralFaceIdx, ringsNum):
-        #Creates a patch, built from a central face and its ringsNum neighbouring rings
-        self.centralFaceIdx = centralFaceIdx
+    def __init__(self, bmeshObj, centerVertexIdx, ringsNum):
+        #Creates a patch, built from a central vertex and its ringsNum neighbouring rings
+        self.centerVertexIdx = centerVertexIdx
         self.facesCounts = 0
 
         self.rings = []
-        self.rings.append([centralFaceIdx]) #Ring "zero", based on the central face
+        self.rings.append([face.index for face in bmeshObj.verts[self.centerVertexIdx].link_faces]) #Ring one, based on the central vertex's neighbourhood
 
-        for i in range(ringsNum):
+        for i in range(1,ringsNum):
             self.rings.append([])
             for prevRingFaceIdx in self.rings[-2]:
                 for vert in bmeshObj.faces[prevRingFaceIdx].verts:
                     for linkedFace in vert.link_faces:
                         #We check the neighbouring face isn't in the 2 previous rings, as well as the current one
                         cond = linkedFace.index in self.rings[-2] or linkedFace.index in self.rings[-1]
-                        if i > 0:
+                        if len(self.rings) > 2:
                             cond = cond or (linkedFace.index in self.rings[-3])
                         
                         #Adding the face to the ring
@@ -65,8 +65,7 @@ class Patch:
         maxFaceSize = 0.0
         facesBarycenters = {}
         facesDists = {}
-
-        facesBarycenters[self.centralFaceIdx] = self.getFaceBarycenter(bmeshObj.faces[self.centralFaceIdx])
+        centralPos = self.getCentralPos(bmeshObj)
 
         for faceIdx in self.getFacesIdxIterator():
             #Calculating the max face area, to normalize face areas later
@@ -74,7 +73,7 @@ class Patch:
             #Baking faces barycenters
             facesBarycenters[faceIdx] = self.getFaceBarycenter(bmeshObj.faces[faceIdx])
             #Finding the largest distance between the central face and a triangle barycenter
-            facesDists[faceIdx] = np.linalg.norm(facesBarycenters[self.centralFaceIdx] - facesBarycenters[faceIdx])
+            facesDists[faceIdx] = np.linalg.norm(facesBarycenters[faceIdx] - centralPos)
 
         sigma = max(facesDists.values()) / 3.0
 
@@ -97,9 +96,9 @@ class Patch:
         self.eigenVals, self.eigenVecs = la.eigh(normalsConvMat)
 
         #Correcting the third eigenvector which estimates the patch normal
-        centralFaceNormal = bmeshObj.faces[self.centralFaceIdx].normal
+        centralNormal = bmeshObj.verts[self.centerVertexIdx].normal
         patchNormal = self.eigenVecs[:,2]
-        if np.dot(centralFaceNormal, -patchNormal) > np.dot(centralFaceNormal, patchNormal):
+        if np.dot(centralNormal, -patchNormal) > 0.0:
             self.eigenVecs[:,2] = -self.eigenVecs[:,2]
 
         self.rotMatInv = np.linalg.inv(self.eigenVecs)
@@ -137,15 +136,11 @@ class Patch:
                 ret.add(edge.index)
         return ret
 
+    def getCentralPos(self, bmeshObj):
+        return np.array(bmeshObj.verts[self.centerVertexIdx].co)
+
     def getFaceBarycenter(self, face):
         return np.array(face.calc_center_median())
-
-    def normalizePosition(self, bmeshObj, pos, isGlobalPos):
-        """
-        Returns the transformed position (unrotated and centered if global) of a given vector pos
-        """
-        centeredPos = pos - (self.getFaceBarycenter(bmeshObj.faces[self.centralFaceIdx]) if isGlobalPos else np.array([0,0,0]))
-        return np.asarray(self.rotMatInv @ np.matrix(centeredPos).T).reshape(-1)
 
     def calculateFaceNormal(self, face):
         n = np.cross(face.verts[0].co - face.verts[1].co, face.verts[1].co - face.verts[2].co)
