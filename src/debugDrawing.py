@@ -73,15 +73,17 @@ def getGPColorMaterialIdx(gpencil, colorHex):
 
     return gpencil.material_slots.find(gpMat.name)
 
-def draw_line(gpencil, gp_frame, p0: tuple, p1: tuple, colorHex):
+def draw_line(gpencil, gp_frame, pointsArr, pointsSize, colorHex):
     # Init new stroke
     gp_stroke = gp_frame.strokes.new()
     gp_stroke.display_mode = '3DSPACE'  # allows for editing
 
     # Define stroke geometry
-    gp_stroke.points.add(count=2)
-    gp_stroke.points[0].co = p0
-    gp_stroke.points[1].co = p1
+    gp_stroke.points.add(count=len(pointsArr))
+    for i in range(len(pointsArr)):
+        point = gp_stroke.points[i]
+        point.co = pointsArr[i]
+        point.pressure = pointsSize[i]
 
     #Getting (creating) a material corresponding to the required color
     gp_stroke.material_index = getGPColorMaterialIdx(gpencil, colorHex)

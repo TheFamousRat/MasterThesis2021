@@ -21,11 +21,11 @@ for pathToAdd in pathsToAdd:
     sys.path.append(pathToAdd)
 
 import Patch
-import debugDrawingBlender
+import debugDrawing
 
 import importlib
 importlib.reload(Patch)
-importlib.reload(debugDrawingBlender)
+importlib.reload(debugDrawing)
 
 for pathToAdd in pathsToAdd:
     sys.path.remove(pathToAdd)
@@ -92,123 +92,90 @@ if len(meshPatches) == 0:
     print("Done")
 
 ##Test to invert a patch position
-gpencil, gp_layer = debugDrawingBlender.init_grease_pencil()
-gp_layer.clear()
+gpencil, gp_layer = debugDrawing.init_grease_pencil()
+gp_layer.clear() #Removing the previous GPencils
 gp_frame = gp_layer.frames.new(0)
-lineSize = 0.005
+lineSize = 0.015
+axisColors = ["ff0000", "00ff00", "0000ff"] #Colors of the XYZ axis
 
 #Operation supposed to take place within a patch's class, so we take an arbitraty one
-patchConsidered = meshPatches[1160]
 
-centralVecPos = patchConsidered.getFaceBarycenter(bm.faces[patchConsidered.centralFaceIdx])
+from sklearn.metrics import pairwise_distances_argmin_min
 
-import scipy.linalg as la
+dataArr = np.array([patch.eigenVals / np.linalg.norm(patch.eigenVals) for patch in meshPatches])
+correctedPatches = []
+uncorrectedPatches = list(range(len(dataArr)))
 
-###
+for patch in meshPatches:
+    patchCentralPos = patch.getFaceBarycenter(bm.faces[patch.centralFaceIdx])
+    dir = lineSize * patch.eigenVecs[:,2]
+    debugDrawing.draw_line(gpencil, gp_frame, (patchCentralPos, patchCentralPos + dir), (0.5, 3.0), "0000ff")
+
+def patchesAxisSignMatching(patchRef, patchToMatch):
+    vertices1Pos = patchRef.getVerticesPos(bm)
+    vertices2Pos = patchToMatch.getVerticesPos(bm)
+
+    from scipy.spatial.distance import cdist
+    from scipy.optimize import linear_sum_assignment
+
+    start = time.time()
+
+    for i in range(8):
+        signsList = [1-2*bool(i & (1<<j)) for j in range(3)] #Signs of the columns that we will switch
+        
+
+    d = cdist(vertices1Pos, vertices2Pos)
+    assignment = linear_sum_assignment(d)
+    d[assignment].sum() / len(d[assignment])
+
+    end = time.time()
+    print("Time taken : {} seconds".format(end - start))
 
 #Plane characteristics
-for patch in meshPatches:
-    planeNormal = patch.eigenVecs[:,2]
-    planeOrigin = patch.getFaceBarycenter(bm.faces[patch.centralFaceIdx])
-    e1 = patch.eigenVecs[:,0]
-    e2 = patch.eigenVecs[:,1]
-    bm.faces[patch.centralFaceIdx].select = True
-
-    #Projecting a vert from the patch onto the plane
-    X = np.array([0.0, 0.0, 0.0])
-    Y = np.array([0.0])
-    for vertIdx in patch.getVerticesIdx(bm):
-        #Projecting the vertex
-        vert = bm.verts[vertIdx]
-        vert.select = True
-        initialPos = np.array(vert.co)
-        t = np.dot(planeNormal, initialPos - planeOrigin)
-        vertProj = initialPos - planeNormal * t
-        #Getting its UV coordinates
-        u = np.dot(e1, vertProj - planeOrigin)
-        v = np.dot(e2, vertProj - planeOrigin)
-        #And registering it into a matrix for regression afterwards
-        X = np.vstack([X, 0.5 * np.array([u*u/2.0, v*v/2.0, u*v])])
-        Y = np.vstack([Y, np.array([t])])
-        debugDrawingBlender.draw_line(gpencil, gp_frame, initialPos, vertProj,  "ff0000")
-
-    beta, res, rk, s = np.linalg.lstsq(X,Y)
-    dir = beta[1] * e1 + beta[2] * e2
-    dir = (dir / np.linalg.norm(dir)) * 0.01
-    break
-    
-###
-
-#Calculating the approximate curvature tensor for the patch
-def debugDrawTensors():
+def principalCurvatureCalc():
     for patch in meshPatches:
-        centralVecPos = patch.getFaceBarycenter(bm.faces[patch.centralFaceIdx])
-        #eigenVals, eigenVecs = la.eigh(patch.computeCurvatureTensor(bm))
-        #print(patch.eigenVals)
-        
-        axisColors = ["ff0000", "00ff00", "0000ff"]
-        
-        for i in range(3):
-            eigenVecDir = lineSize * patch.eigenVecs[:,i]
-            debugDrawingBlender.draw_line(gpencil, gp_frame, centralVecPos, centralVecPos + eigenVecDir,  axisColors[i])
-#debugDrawTensors()
+        planeNormal = patch.eigenVecs[:,2]
+        planeOrigin = patch.getFaceBarycenter(bm.faces[patch.centralFaceIdx])
+        e1 = patch.eigenVecs[:,0]
+        e2 = patch.eigenVecs[:,1]
+        bm.faces[patch.centralFaceIdx].select = True
 
-def prout():
-    vertsId = patchConsidered.getVerticesIdx(bm)
+        #Projecting a vert from the patch onto the plane
+        X = np.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        Y = np.array([0.0])
+        for vertIdx in patch.getVerticesIdx(bm):
+            #Projecting the vertex
+            vert = bm.verts[vertIdx]
+            vert.select = True
+            initialPos = np.array(vert.co)
+            t = np.dot(planeNormal, initialPos - planeOrigin)
+            vertProj = initialPos - planeNormal * t
+            #Getting its UV coordinates
+            u = np.dot(e1, vertProj - planeOrigin)
+            v = np.dot(e2, vertProj - planeOrigin)
+            #And registering it into a matrix for regression afterwards
+            X = np.vstack([X, np.array([1.0, u, v, u*u, u*v, v*v])])
+            Y = np.vstack([Y, np.array([t])])
+
+        beta, res, rk, s = np.linalg.lstsq(X,Y)
+        v1 = np.array([1.0, 1.0, 0.0, 0.0, 0.0, 0.0])
+        v2 = np.array([1.0, -1.0, 0.0, 0.0, 0.0, 0.0])
+        if np.dot(v1, beta) < np.dot(v2, beta):
+            e1 = -e1
+        dir = lineSize * e1
+        debugDrawing.draw_line(gpencil, gp_frame, (planeOrigin, planeOrigin + dir), (1.0, 5.0),  "ff0000")          
+#principalCurvatureCalc()
+
+
+def unrotateMeshPatch(patch_):
+    vertsId = patch_.getVerticesIdx(bm)
+    centralFacePos_ = patch_.getFaceBarycenter(bm.faces[patch_.centralFaceIdx])
     unrotatedVertsPos = {}
     for vertId in vertsId:
-        unrotatedVertsPos[vertId] = rotMatInv @ (np.array(bm.verts[vertId].co) - centralVecPos)
+        unrotatedVertsPos[vertId] = patch_.rotMatInv @ (np.array(bm.verts[vertId].co) - centralFacePos_)
         
     for vertId in vertsId:
         bm.verts[vertId].co = unrotatedVertsPos[vertId]
     bmesh.update_edit_mesh(selectedObj.data)
 
-#prout()
-
-##Logic to sample patch normals
-def testNormalSampling():
-    samplerRes = 8 #Square root of the number of samples to be taken from the normals
-
-    #Getting the BBox of the unrotated patch
-    BBoxSize = []
-    zipdCoords = zip(*unrotatedVertsPos.values())
-    for i in zipdCoords:
-        BBoxSize.append((max(i) - min(i)).item(0))
-    #Building the plane vectors
-    planeVecs = np.diag(BBoxSize)
-
-    #Projecting the faces to the plane
-    normalizedFaceCoords = {}
-    normalizedNormals = {}
-    for faceIdx in patchConsidered.getFacesIdxIterator():
-        normalizedFaceCoords[faceIdx] = patchConsidered.normalizePosition(bm, patchConsidered.getFaceBarycenter(bm.faces[faceIdx]), True)
-        normalizedNormals[faceIdx] = patchConsidered.normalizePosition(bm, np.array(bm.faces[faceIdx].normal), False)
-
-    def getSampleToFacePlaneDist(sampleCoords, faceIdxNp):
-        i = sampleCoords%samplerRes
-        j = (sampleCoords-i)/samplerRes
-        i = (i*2 - (samplerRes-1))/samplerRes
-        j = (j*2 - (samplerRes-1))/samplerRes
-        faceIdx = faceIdxNp[0]
-        sampleFaceCoords = planeVecs[1] * i + planeVecs[2] * j
-        return abs(np.dot(normalizedNormals[faceIdx], sampleFaceCoords - normalizedFaceCoords[faceIdx]))
-
-    #Sampling the unrotated normal values from the patch
-    sampledVals = [[np.zeros((3,1)) for j in range(samplerRes)] for i in range(samplerRes)]
-    facesIdx = [[faceIdx] for faceIdx in patchConsidered.getFacesIdxIterator()]
-    K = 3 #Number of closest faces to take into account
-    for i in range(samplerRes):
-        for j in range(samplerRes):
-            #Finding the K closest faces to the sample, and adding their normals together
-            distVec = cdist([[i+j*samplerRes]], facesIdx, metric = getSampleToFacePlaneDist)[0]
-            sortedDistIdx = distVec.argsort()
-            totalWeights = 0.0
-            normApprox = np.array([0.0,0.0,0.0])
-            for i in range(K):
-                idx = sortedDistIdx[i]
-                faceIdx = facesIdx[idx][0]
-                dist = distVec[idx]
-                weight = math.exp(-dist)
-                totalWeights += weight
-                normApprox += weight * normalizedNormals[faceIdx]
-            normApprox = normApprox / totalWeights
+#unrotateMeshPatch(patchConsidered)

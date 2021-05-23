@@ -90,9 +90,18 @@ class Patch:
             normalVec = bmeshObj.faces[faceIdx].normal
             normalVec = normalVec / np.linalg.norm(normalVec)
             faceNormal = np.matrix(np.array(normalVec)).T #Transforming the face normal into a vector
-            normalsConvMat += (faceNormal @ faceNormal.T) * bmeshObj.faces[faceIdx].calc_area()# * self.faceWeights[faceIdx]
+            normalsConvMat += (faceNormal @ faceNormal.T) * self.faceWeights[faceIdx]
 
+        #Extracting the orthogonal directions from the tensor
+        #The signs of the eigenvectors are unreliable here and will be corrected
         self.eigenVals, self.eigenVecs = la.eigh(normalsConvMat)
+
+        #Correcting the third eigenvector which estimates the patch normal
+        centralFaceNormal = bmeshObj.faces[self.centralFaceIdx].normal
+        patchNormal = self.eigenVecs[:,2]
+        if np.dot(centralFaceNormal, -patchNormal) > np.dot(centralFaceNormal, patchNormal):
+            self.eigenVecs[:,2] = -self.eigenVecs[:,2]
+
         self.rotMatInv = np.linalg.inv(self.eigenVecs)
     
     def getFacesIdxIterator(self):
@@ -110,6 +119,13 @@ class Patch:
             for vert in bmeshObj.faces[faceIdx].verts:
                 ret.add(vert.index)
         return ret
+
+    def getVerticesPos(self, bmeshObj):
+        """
+        Returns the local translation of the patch's vertices
+        """
+        vertsIdxSet = self.getVerticesIdx(bmeshObj)
+        return np.array([bmeshObj.verts[vertIdx].co for vertIdx in vertsIdxSet])
 
     def getEdgesIdx(self, bmeshObj):
         """
