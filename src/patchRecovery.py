@@ -1,19 +1,27 @@
+###Loading libraries
+##Pip/standard libraries loading
+#Python standard libraries
 import os
-import bpy
-import bmesh
 import sys
 import time
 import math
 #To compress mesh data files efficiently
 import pickle
 import lzma
-
+#Image processing
 from PIL import Image
-
+#Blender libs
+import bpy
+import bmesh
+#Hashing utilies for mesh unique identification
 import hashlib
+#Scikit suite
 import numpy as np
 from scipy.spatial.distance import cdist
+#Show progress bar utility
+from progress.bar import Bar
 
+##Local libraries (re-)loading
 #Loading user-defined modules (subject to frequent changes and needed reloading)
 pathsToAdd = ["/home/home/thefamousrat/Documents/KU Leuven/Master Thesis/MasterThesis2021/src"]
 
@@ -33,6 +41,13 @@ for pathToAdd in pathsToAdd:
 ###Constants
 RINGS_NUM = 2 #Number of rings around the central face to take into the patch
 
+##GPencil debug drawing global variables
+gpencil, gp_layer = debugDrawing.init_grease_pencil()
+gp_layer.clear() #Removing the previous GPencils
+gp_frame = gp_layer.frames.new(0)
+lineSize = 0.015
+axisColors = ["ff0000", "00ff00", "0000ff"] #Colors of the XYZ axis
+
 ### Functions
 def getMeshHash(obj):
     return hashlib.sha224( str(obj.data.vertices).strip('[]').encode('utf-8') ).hexdigest()
@@ -43,7 +58,7 @@ def createFacePatch(bmeshObj, face):
 def getPatchesSimilarity(patch1Idx, patch2Idx, patchArr):
     return pow(np.linalg.norm(patch1.eigenVals - patch2.eigenVals), 2.0)
     
-### Logic
+###Body
 #Creating the bmesh
 selectedObj = bpy.context.active_object
 
@@ -91,13 +106,6 @@ if len(meshPatches) == 0:
         pickle.dump(meshPatches, f)
     print("Done")
 
-##Test to invert a patch position
-gpencil, gp_layer = debugDrawing.init_grease_pencil()
-gp_layer.clear() #Removing the previous GPencils
-gp_frame = gp_layer.frames.new(0)
-lineSize = 0.015
-axisColors = ["ff0000", "00ff00", "0000ff"] #Colors of the XYZ axis
-
 ##Correcting the patches' orthogonal basis signs
 #Pairing the patches together as a ref and uncorrected patch couple
 from sklearn.metrics import pairwise_distances_argmin_min
@@ -116,6 +124,7 @@ correctedPatches.append(startingPatchIdx)
 uncorrectedPatches.remove(startingPatchIdx)
 closestPoints, closestDists = pairwise_distances_argmin_min(dataArr[correctedPatches], dataArr[uncorrectedPatches])
 
+bar = Bar('Building patch connectivity map', suffix='%(percent).1f%% - %(eta)ds', max=len(uncorrectedPatches) - 1)
 while len(uncorrectedPatches) > 1:
     ##Find the closest uncorrected patch and its ref patch
     closestRelationId = np.argmin(closestDists)
@@ -127,7 +136,7 @@ while len(uncorrectedPatches) > 1:
     closestPoints = np.append(closestPoints, -1)
     closestDists = np.append(closestDists, 0.0)
     correctedPatches.append(patchToCorrectIdx)
-    print("Closest ref : {}, closest uncorrected patch : {} (remaining uncorrected patches : {})".format(refPatchIdx, patchToCorrectIdx, len(uncorrectedPatches)))
+    #print("Closest ref : {}, closest uncorrected patch : {} (remaining uncorrected patches : {})".format(refPatchIdx, patchToCorrectIdx, len(uncorrectedPatches)))
     ##Finding nearest neighbours for the corrected points that used to have the new point as their nearest neighbour
     #Locating the patches with refPatchIdx as their nearest neighbour
     patchesObsNearstNeighbPos = np.where(closestPoints == patchToCorrectIdx)[0]
@@ -138,12 +147,15 @@ while len(uncorrectedPatches) > 1:
     for i in range(len(patchesObsNearstNeighbPos)):
         closestPoints[patchesObsNearstNeighbPos[i]] = uncorrectedPatches[newPatchClosestPoints[i]]
         closestDists[patchesObsNearstNeighbPos[i]] = newPatchClosestDists[i]
+    bar.next()
 
 refPatchPairs.append((correctedPatches[np.argmin(closestDists)], uncorrectedPatches[0]))
 
 end = time.time()
 
 print("Total time : ", end - start)
+
+print(refPatchPairs[0])
 
 
 def patchesAxisSignMatching(patchRef, patchToMatch):
