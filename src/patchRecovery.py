@@ -98,18 +98,53 @@ gp_frame = gp_layer.frames.new(0)
 lineSize = 0.015
 axisColors = ["ff0000", "00ff00", "0000ff"] #Colors of the XYZ axis
 
-#Operation supposed to take place within a patch's class, so we take an arbitraty one
-
+##Correcting the patches' orthogonal basis signs
+#Pairing the patches together as a ref and uncorrected patch couple
 from sklearn.metrics import pairwise_distances_argmin_min
 
 dataArr = np.array([patch.eigenVals / np.linalg.norm(patch.eigenVals) for patch in meshPatches])
 correctedPatches = []
 uncorrectedPatches = list(range(len(dataArr)))
+refPatchPairs = []
 
-for patch in meshPatches:
-    patchCentralPos = patch.getFaceBarycenter(bm.faces[patch.centralFaceIdx])
-    dir = lineSize * patch.eigenVecs[:,2]
-    debugDrawing.draw_line(gpencil, gp_frame, (patchCentralPos, patchCentralPos + dir), (0.5, 3.0), "0000ff")
+start = time.time()
+
+#Picking an arbitrary patch : the directions of his orthogonal basis are defined as a correct reference
+startingPatchIdx = 4150
+
+correctedPatches.append(startingPatchIdx)
+uncorrectedPatches.remove(startingPatchIdx)
+closestPoints, closestDists = pairwise_distances_argmin_min(dataArr[correctedPatches], dataArr[uncorrectedPatches])
+
+while len(uncorrectedPatches) > 1:
+    ##Find the closest uncorrected patch and its ref patch
+    closestRelationId = np.argmin(closestDists)
+    refPatchIdx = correctedPatches[closestRelationId]
+    patchToCorrectIdx = closestPoints[closestRelationId]
+    refPatchPairs.append((refPatchIdx, patchToCorrectIdx))
+    uncorrectedPatches.remove(patchToCorrectIdx)
+    ##Creating a new row for the new patch, with empty data
+    closestPoints = np.append(closestPoints, -1)
+    closestDists = np.append(closestDists, 0.0)
+    correctedPatches.append(patchToCorrectIdx)
+    print("Closest ref : {}, closest uncorrected patch : {} (remaining uncorrected patches : {})".format(refPatchIdx, patchToCorrectIdx, len(uncorrectedPatches)))
+    ##Finding nearest neighbours for the corrected points that used to have the new point as their nearest neighbour
+    #Locating the patches with refPatchIdx as their nearest neighbour
+    patchesObsNearstNeighbPos = np.where(closestPoints == patchToCorrectIdx)[0]
+    patchesObsNearstNeighbPos = np.append(patchesObsNearstNeighbPos, len(correctedPatches)-1)
+    patchesObsNearstNeighbIdx = np.array(correctedPatches)[patchesObsNearstNeighbPos]
+    #Finding new nearest neighbours of those patches, registering the relevant statistics
+    newPatchClosestPoints, newPatchClosestDists = pairwise_distances_argmin_min(dataArr[patchesObsNearstNeighbIdx], dataArr[uncorrectedPatches])
+    for i in range(len(patchesObsNearstNeighbPos)):
+        closestPoints[patchesObsNearstNeighbPos[i]] = uncorrectedPatches[newPatchClosestPoints[i]]
+        closestDists[patchesObsNearstNeighbPos[i]] = newPatchClosestDists[i]
+
+refPatchPairs.append((correctedPatches[np.argmin(closestDists)], uncorrectedPatches[0]))
+
+end = time.time()
+
+print("Total time : ", end - start)
+
 
 def patchesAxisSignMatching(patchRef, patchToMatch):
     vertices1Pos = patchRef.getVerticesPos(bm)
