@@ -161,14 +161,18 @@ meshDataPath = os.path.join(bpy.path.abspath("//"), 'meshesData/{}/'.format(getM
 if not os.path.exists(meshDataPath):
     os.makedirs(meshDataPath)
 
-#Covering the mesh with patches
+##Covering the mesh with patches
 meshPatches = []
 
+#Checking in patches were baked/are still up to date
 patchesDataPath = os.path.join(meshDataPath, 'patches.pkl')
 if os.path.exists(patchesDataPath):
+    #Loading binary baked patches file
     print("Baked patches file found in {}. Loading...".format(patchesDataPath))
     with lzma.open(patchesDataPath, 'rb') as f:
         meshPatches = pickle.load(f)  
+    
+    #Checking equality between two patches for the same mesh
     print("Checking integrity...")
     patchRef = createVertexPatch(bm, bm.verts[0])
     patchBaked = meshPatches[0]
@@ -178,6 +182,7 @@ if os.path.exists(patchesDataPath):
     else:
         print("Patch integrity test successful")
     
+#Checking if the patchs were correctly loaded
 if len(meshPatches) == 0:
     #Patches not found, baking them
     print("Building patches for the mesh")
@@ -188,8 +193,7 @@ if len(meshPatches) == 0:
     end = time.time()
     print("Time taken : {} seconds".format(end - start))
     
-    ##Correcting the patches' orthogonal basis signs
-    #Pairing the patches together as a ref and uncorrected patch couple
+    #Launching a procedure to correct the orientation of the patches' eigenvectors
     refPatchChain = createPatchCorrectionChain(0)
         
     print("Starting to correct the patches' signs...")
@@ -214,3 +218,84 @@ for patch in meshPatches:
     for i in range(3):
         dir = patch.eigenVecs[:,i]
         debugDrawing.draw_line(gpencil, gp_frame, (patchCentralPos, patchCentralPos + lineSize * dir), (0.5, 3.0), axisColors[i])
+
+
+
+
+##Baking patch texture info
+#Creating a temporary UV layer
+uvLayerName = "tempProj"
+if not uvLayerName in selectedObj.data.uv_layers:
+    selectedObj.data.uv_layers.new(name = uvLayerName)
+uvLayer = selectedObj.data.uv_layers[uvLayerName]
+    
+if not uvLayer.active:
+    uvLayer.active
+
+#Creating an image to bake to
+bakedImgName = "bakedImage"
+bakedImgSize = 16
+if not bakedImgName in bpy.data.images:
+    bpy.data.images.new(bakedImgName, bakedImgSize, bakedImgSize)
+bpy.data.images[bakedImgName].scale(bakedImgSize, bakedImgSize)
+    
+
+#Preparing the shaders for baking if they aren't already
+imageNodeName = "BakedTextureNode"
+uvLayerNodeName = "BakedUVLayerNode"
+for mat in selectedObj.data.materials:
+    nodeTree = mat.node_tree #shorthand
+    #Preparing the image node
+    if not imageNodeName in mat.node_tree.nodes:
+        nodeTree.nodes.new("ShaderNodeTexImage").name = imageNodeName
+        
+    imageNode = nodeTree.nodes[imageNodeName]
+    imageNode.location = np.array([0.0, 0.0])
+    imageNode.image = bpy.data.images[bakedImgName]
+        
+    #Preparing the UV node
+    if not uvLayerNodeName in nodeTree.nodes:
+        newNode = nodeTree.nodes.new("ShaderNodeUVMap")
+        newNode.name = uvLayerNodeName
+    
+    uvNode = nodeTree.nodes[uvLayerNodeName]
+    uvNode.location = np.array(imageNode.location) - np.array([200.0,0.0])
+    uvNode.uv_map = uvLayerName
+    
+    #Connecting the nodes (if necessary)
+    if len(imageNode.inputs['Vector'].links) == 0:
+        nodeTree.links.new(uvNode.outputs['UV'], imageNode.inputs[0])
+    
+#Unselecting every faces
+for face in bm.faces:
+    face.select = False
+
+#'Resetting' the UV map by putting all UV is a far away corner... Yikes
+for vert in bm.verts:
+    for loop in vert.link_loops:
+        loop[bm.loops.layers.uv[uvLayerName]].uv = np.array([2.0, 2.0])
+
+#Selecting a patch
+patchesToWorkOn = [meshPatches[0]]
+for patch in patchesToWorkOn:
+    patchFacesIt = patch.getFacesIdxIterator()
+    for faceIdx in patchFacesIt:
+        bm.faces[faceIdx].select = True
+    
+    #Remove the rest of the UVs from the focus
+    #...
+    
+    #Baking it
+    bpy.ops.uv.unwrap()
+    
+    #Center the UVs (so that the central vertex is at pos (0.5,0.5)
+    posShift = np.array([0.5, 0.5]) - np.array(patch.getVertUV(bm, patch.centerVertexIdx, uvLayerName))
+    
+    for vIdx in patch.verticesIdxList:
+        vertUVCoords = patch.getVertUV(bm, vIdx, uvLayerName)
+        patch.setVertUV(bm, vIdx, uvLayerName, np.array(vertUVCoords) + posShift)
+
+    for faceIdx in patchFacesIt:
+        bm.faces[faceIdx].select = False
+        
+    

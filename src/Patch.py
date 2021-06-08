@@ -27,6 +27,12 @@ class Patch:
                             self.rings[-1].append(linkedFace.index)
                             self.facesCounts += 1
 
+        self.verticesIdxList = set()
+        for faceIdx in self.getFacesIdxIterator():
+            for vert in bmeshObj.faces[faceIdx].verts:
+                self.verticesIdxList.add(vert.index)
+        self.verticesIdxList = np.array(list(self.verticesIdxList))
+
         self.calculateIndicators(bmeshObj)
 
     def calculateIndicators(self, bmeshObj):
@@ -51,7 +57,7 @@ class Patch:
         Calculates the barycenter of the patch by averaging local vertex positions
         """
         self.barycenter = np.array([0.0, 0.0, 0.0])
-        verticesSet = self.getVerticesIdx(bmeshObj)
+        verticesSet = self.verticesIdxList
 
         for vertexIdx in verticesSet:
             self.barycenter += np.array(bmeshObj.verts[vertexIdx].co)
@@ -109,21 +115,11 @@ class Patch:
         """
         return itertools.chain.from_iterable(self.rings)
 
-    def getVerticesIdx(self, bmeshObj):
-        """
-        Returns a list of the indices of vertices forming the patch
-        """
-        ret = set()
-        for faceIdx in self.getFacesIdxIterator():
-            for vert in bmeshObj.faces[faceIdx].verts:
-                ret.add(vert.index)
-        return ret
-
     def getVerticesPos(self, bmeshObj):
         """
         Returns the local translation of the patch's vertices
         """
-        vertsIdxSet = self.getVerticesIdx(bmeshObj)
+        vertsIdxSet = self.verticesIdxList
         return np.array([bmeshObj.verts[vertIdx].co for vertIdx in vertsIdxSet])
 
     def getEdgesIdx(self, bmeshObj):
@@ -159,3 +155,24 @@ class Patch:
         curvatureTensor /= self.totalArea
 
         return curvatureTensor
+
+    def getVertUV(self, bmeshObj, vertIdx, uvLayerName):
+        """
+        Finds the UV coordinates of a vertex from the patch, by returning the first uv from a loop contained within the patch
+        """
+        vert = bmeshObj.verts[vertIdx]
+        facesList = list(self.getFacesIdxIterator())
+        for loop in vert.link_loops:
+            if loop.face.index in facesList:
+                return loop[bmeshObj.loops.layers.uv[uvLayerName]].uv
+        return None
+
+    def setVertUV(self, bmeshObj, vertIdx, uvLayerName, newPos):
+        """
+        Set the uv to the correct position for every loop of the patch containing it
+        """
+        vert = bmeshObj.verts[vertIdx]
+        facesList = list(self.getFacesIdxIterator())
+        for loop in vert.link_loops:
+            if loop.face.index in facesList:
+                loop[bmeshObj.loops.layers.uv[uvLayerName]].uv = newPos
