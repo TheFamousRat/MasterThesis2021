@@ -176,3 +176,117 @@ class Patch:
         for loop in vert.link_loops:
             if loop.face.index in facesList:
                 loop[bmeshObj.loops.layers.uv[uvLayerName]].uv = newPos
+
+    uvLayerName = "tempProj"
+    bakedImgName = "bakedImage"
+    bakedImgSize = 16
+    imageNodeName = "BakedTextureNode"
+    uvLayerNodeName = "BakedUVLayerNode"
+    @staticmethod
+    def setupBakingEnvironment(bmeshObj):
+        prevRenderEngine = bpy.context.scene.render.engine
+        bpy.context.scene.render.engine = 'CYCLES'
+
+        selecObj = bpy.context.active_object
+        #Creating a temporary UV layer
+        if not Patch.uvLayerName in selecObj.data.uv_layers:
+            selecObj.data.uv_layers.new(name = Patch.uvLayerName)
+        
+        uvLayer = selecObj.data.uv_layers[Patch.uvLayerName] 
+        if not uvLayer.active:
+            uvLayer.active = True
+
+        #Creating an image to bake to
+        if not Patch.bakedImgName in bpy.data.images:
+            bpy.data.images.new(Patch.bakedImgName, Patch.bakedImgSize, Patch.bakedImgSize)
+        bpy.data.images[Patch.bakedImgName].scale(Patch.bakedImgSize, Patch.bakedImgSize)
+            
+        #Preparing the shaders for baking if they aren't already
+        for mat in selecObj.data.materials:
+            nodeTree = mat.node_tree #shorthand
+            #Preparing the image node
+            if not Patch.imageNodeName in mat.node_tree.nodes:
+                nodeTree.nodes.new("ShaderNodeTexImage").name = Patch.imageNodeName
+                
+            imageNode = nodeTree.nodes[Patch.imageNodeName]
+            imageNode.location = np.array([0.0, 0.0])
+            imageNode.image = bpy.data.images[Patch.bakedImgName]
+                
+            #Preparing the UV node
+            if not Patch.uvLayerNodeName in nodeTree.nodes:
+                newNode = nodeTree.nodes.new("ShaderNodeUVMap")
+                newNode.name = Patch.uvLayerNodeName
+            
+            uvNode = nodeTree.nodes[Patch.uvLayerNodeName]
+            uvNode.location = np.array(imageNode.location) - np.array([200.0,0.0])
+            uvNode.uv_map = Patch.uvLayerName
+            
+            #Connecting the nodes (if necessary)
+            if len(imageNode.inputs['Vector'].links) == 0:
+                nodeTree.links.new(uvNode.outputs['UV'], imageNode.inputs[0])
+                
+            #Setting the Image texture one as the active
+            nodeTree.nodes.active = imageNode
+            
+        #Unselecting every faces
+        for face in bmeshObj.faces:
+            face.select = False
+
+    def bakePatchTexture(self, bmeshObj):
+        #'Resetting' the UV map by putting all UV is a far away corner... Dirty but works !
+        for vert in bmeshObj.verts:
+            for loop in vert.link_loops:
+                loop[bmeshObj.loops.layers.uv[Patch.uvLayerName]].uv = np.array([2.0, 2.0])
+        
+        patchFacesIt = self.getFacesIdxIterator()
+        
+        #Remove the rest of the UVs from the focus
+        #!!!!!
+        for face in bmeshObj.faces:
+            face.select = False
+        
+        #Unwrap using angle-based approach
+        for faceIdx in patchFacesIt:
+            bmeshObj.faces[faceIdx].select = True
+        
+        bpy.ops.uv.unwrap()
+        
+        #Center the UVs (so that the central vertex is at pos (0.5,0.5)
+        uvMapCenter = np.array([0.5, 0.5])
+        posShift = uvMapCenter - np.array(self.getVertUV(bmeshObj, self.centerVertexIdx, Patch.uvLayerName))
+        
+        for vIdx in self.verticesIdxList:
+            vertUVCoords = self.getVertUV(bmeshObj, vIdx, Patch.uvLayerName)
+            self.setVertUV(bmeshObj, vIdx, Patch.uvLayerName, np.array(vertUVCoords) + posShift)
+        
+        #Rotate the UVs to match local axis
+        #Finding a ref
+        linkedEdge = bmeshObj.verts[self.centerVertexIdx].link_edges[0]
+        refVertIdx = (linkedEdge.verts[0] if linkedEdge.verts[0].index != self.centerVertexIdx else linkedEdge.verts[1]).index
+        
+        #Projecting that ref onto the plane
+        planeNormal = self.eigenVecs[:,2]
+        planeOrigin = np.array(bmeshObj.verts[self.centerVertexIdx].co)
+        vertWorldPos = np.array(bmeshObj.verts[refVertIdx].co)
+        vertRelPos = vertWorldPos - planeOrigin
+        projCoords = np.array([np.dot(vertRelPos, self.eigenVecs[:,0]), np.dot(vertRelPos, self.eigenVecs[:,1])])
+        
+        #Angle between the projection and the x-axis (in the world plane)
+        angleWorld = -math.atan2(projCoords[1], projCoords[0])
+        
+        #xAxis in the UV map
+        refVecUV = np.matrix(self.getVertUV(bmeshObj, refVertIdx, Patch.uvLayerName)).T
+        centerVec = np.matrix(uvMapCenter).T
+        centeredRefUV = refVecUV - centerVec
+        angleUV = math.atan2(centeredRefUV[1], centeredRefUV[0])
+        
+        #Rotation matrix
+        rotMatInvUV = np.matrix([[math.cos(-angleUV), -math.sin(-angleUV)],[math.sin(-angleUV), math.cos(-angleUV)]])
+        rotMatInvAxis = np.matrix([[math.cos(angleWorld), -math.sin(angleWorld)],[math.sin(angleWorld), math.cos(angleWorld)]])
+        rotMat = rotMatInvAxis @ rotMatInvUV
+        
+        for vIdx in self.verticesIdxList:
+            vertUVCoords = np.matrix(self.getVertUV(bmeshObj, vIdx, Patch.uvLayerName)).T
+            self.setVertUV(bmeshObj, vIdx, Patch.uvLayerName, (rotMat @ (vertUVCoords - centerVec)) + centerVec)
+        
+        bpy.ops.object.bake(type='EMIT')
