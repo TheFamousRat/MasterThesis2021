@@ -1,3 +1,5 @@
+import bpy
+import os
 import math
 import numpy as np
 import scipy.linalg as la
@@ -182,6 +184,7 @@ class Patch:
     bakedImgSize = 16
     imageNodeName = "BakedTextureNode"
     uvLayerNodeName = "BakedUVLayerNode"
+    uvExclusionPoint = np.array([2.0, 2.0]) #Location where the UV not to be used are isolated
     @staticmethod
     def setupBakingEnvironment(bmeshObj):
         prevRenderEngine = bpy.context.scene.render.engine
@@ -232,21 +235,19 @@ class Patch:
         for face in bmeshObj.faces:
             face.select = False
 
-    def bakePatchTexture(self, bmeshObj):
         #'Resetting' the UV map by putting all UV is a far away corner... Dirty but works !
         for vert in bmeshObj.verts:
             for loop in vert.link_loops:
                 loop[bmeshObj.loops.layers.uv[Patch.uvLayerName]].uv = np.array([2.0, 2.0])
-        
-        patchFacesIt = self.getFacesIdxIterator()
-        
+
+    def bakePatchTexture(self, bmeshObj, patchDataFilepath):
         #Remove the rest of the UVs from the focus
         #!!!!!
         for face in bmeshObj.faces:
             face.select = False
         
         #Unwrap using angle-based approach
-        for faceIdx in patchFacesIt:
+        for faceIdx in self.getFacesIdxIterator():
             bmeshObj.faces[faceIdx].select = True
         
         bpy.ops.uv.unwrap()
@@ -265,7 +266,6 @@ class Patch:
         refVertIdx = (linkedEdge.verts[0] if linkedEdge.verts[0].index != self.centerVertexIdx else linkedEdge.verts[1]).index
         
         #Projecting that ref onto the plane
-        planeNormal = self.eigenVecs[:,2]
         planeOrigin = np.array(bmeshObj.verts[self.centerVertexIdx].co)
         vertWorldPos = np.array(bmeshObj.verts[refVertIdx].co)
         vertRelPos = vertWorldPos - planeOrigin
@@ -285,8 +285,19 @@ class Patch:
         rotMatInvAxis = np.matrix([[math.cos(angleWorld), -math.sin(angleWorld)],[math.sin(angleWorld), math.cos(angleWorld)]])
         rotMat = rotMatInvAxis @ rotMatInvUV
         
+        #Rotate around the central vec
         for vIdx in self.verticesIdxList:
             vertUVCoords = np.matrix(self.getVertUV(bmeshObj, vIdx, Patch.uvLayerName)).T
             self.setVertUV(bmeshObj, vIdx, Patch.uvLayerName, (rotMat @ (vertUVCoords - centerVec)) + centerVec)
         
-        bpy.ops.object.bake(type='EMIT')
+        #Bake
+        bpy.ops.object.bake(type='EMIT', use_clear = True, margin = 0)
+
+        #Save image
+        #bpy.data.images[Patch.bakedImgName].save_render(os.path.join(patchDataFilepath, "{}.png".format(self.centerVertexIdx)))
+
+        #Remove UVs from sight
+        for vertIdx in self.verticesIdxList:
+            vert = bmeshObj.verts[vertIdx]
+            for loop in vert.link_loops:
+                loop[bmeshObj.loops.layers.uv[Patch.uvLayerName]].uv = Patch.uvExclusionPoint
