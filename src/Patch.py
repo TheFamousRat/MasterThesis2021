@@ -1,9 +1,11 @@
+from numpy.lib.function_base import angle
 import bpy
 import os
 import math
 import numpy as np
 import scipy.linalg as la
 import itertools
+from PIL import Image
 
 class Patch:
     def __init__(self, bmeshObj, centerVertexIdx, ringsNum):
@@ -34,6 +36,8 @@ class Patch:
             for vert in bmeshObj.faces[faceIdx].verts:
                 self.verticesIdxList.add(vert.index)
         self.verticesIdxList = np.array(list(self.verticesIdxList))
+
+        self.image = None
 
         self.calculateIndicators(bmeshObj)
 
@@ -108,6 +112,17 @@ class Patch:
         patchNormal = self.eigenVecs[:,2]
         if np.dot(centralNormal, -patchNormal) > 0.0:
             self.eigenVecs[:,2] = -self.eigenVecs[:,2]
+
+        #Implementing a proposition by Guo et al. 2012 "Rotational Projection Statistics for 3D Local Surface Description and Object Recognition"
+        centerVertPos = np.array(bmeshObj.verts[self.centerVertexIdx].co)
+        h0 = 0.0
+        h2 = 0.0
+        for faceIdx in self.getFacesIdxIterator():
+            face = bmeshObj.faces[faceIdx]
+            h2 += self.faceWeights[faceIdx] * np.dot(face.normal, self.eigenVecs[:,2])
+
+        self.eigenVecs[:,2] = self.eigenVecs[:,2] * np.sign(h2)
+        self.eigenVecs[:,1] = np.cross(self.eigenVecs[:,0], self.eigenVecs[:,2]) 
 
         self.rotMatInv = np.linalg.inv(self.eigenVecs)
     
@@ -202,6 +217,7 @@ class Patch:
         #Creating an image to bake to
         if not Patch.bakedImgName in bpy.data.images:
             bpy.data.images.new(Patch.bakedImgName, Patch.bakedImgSize, Patch.bakedImgSize)
+        bpy.data.images[Patch.bakedImgName].source = 'GENERATED'
         bpy.data.images[Patch.bakedImgName].scale(Patch.bakedImgSize, Patch.bakedImgSize)
             
         #Preparing the shaders for baking if they aren't already
@@ -238,11 +254,15 @@ class Patch:
         #'Resetting' the UV map by putting all UV is a far away corner... Dirty but works !
         for vert in bmeshObj.verts:
             for loop in vert.link_loops:
-                loop[bmeshObj.loops.layers.uv[Patch.uvLayerName]].uv = np.array([2.0, 2.0])
+                loop[bmeshObj.loops.layers.uv[Patch.uvLayerName]].uv = Patch.uvExclusionPoint
 
     def bakePatchTexture(self, bmeshObj, patchDataFilepath):
         #Remove the rest of the UVs from the focus
         #!!!!!
+        for vert in bmeshObj.verts:
+            for loop in vert.link_loops:
+                loop[bmeshObj.loops.layers.uv[Patch.uvLayerName]].uv = Patch.uvExclusionPoint
+
         for face in bmeshObj.faces:
             face.select = False
         
@@ -270,7 +290,7 @@ class Patch:
         vertWorldPos = np.array(bmeshObj.verts[refVertIdx].co)
         vertRelPos = vertWorldPos - planeOrigin
         projCoords = np.array([np.dot(vertRelPos, self.eigenVecs[:,0]), np.dot(vertRelPos, self.eigenVecs[:,1])])
-        
+
         #Angle between the projection and the x-axis (in the world plane)
         angleWorld = -math.atan2(projCoords[1], projCoords[0])
         
@@ -295,7 +315,9 @@ class Patch:
 
         #Save image
         #bpy.data.images[Patch.bakedImgName].save_render(os.path.join(patchDataFilepath, "{}.png".format(self.centerVertexIdx)))
+        self.image = bpy.data.images[Patch.bakedImgName].pixels[:]
 
+        return
         #Remove UVs from sight
         for vertIdx in self.verticesIdxList:
             vert = bmeshObj.verts[vertIdx]

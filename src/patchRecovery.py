@@ -194,14 +194,14 @@ if len(meshPatches) == 0:
     print("Time taken : {} seconds".format(end - start))
     
     #Launching a procedure to correct the orientation of the patches' eigenvectors
-    refPatchChain = createPatchCorrectionChain(0)
+    #refPatchChain = createPatchCorrectionChain(0)
         
     print("Starting to correct the patches' signs...")
 
     start = time.time()
 
-    for couple in refPatchChain:
-        patchesAxisSignMatching(meshPatches[couple[0]], meshPatches[couple[1]], bm)
+    #for couple in refPatchChain:
+    #    patchesAxisSignMatching(meshPatches[couple[0]], meshPatches[couple[1]], bm)
 
     end = time.time()
     print("Time taken : {} seconds".format(end - start))
@@ -220,17 +220,20 @@ for patch in meshPatches:
         debugDrawing.draw_line(gpencil, gp_frame, (patchCentralPos, patchCentralPos + lineSize * dir), (0.5, 3.0), axisColors[i])
 
 
-##Baking patch texture info
+##Loading patch color information
 Patch.Patch.setupBakingEnvironment(bm)
 length = 1000
-bar = Bar('Building patch connectivity map', suffix='%(percent).1f%%', max=length)
+bar = Bar('Extracting patch texture patches', suffix='%(percent).1f%%', max=length)
 
 start = time.time()
 
 for i in range(length):
+    break
     patch = meshPatches[i]
     patch.bakePatchTexture(bm, meshDataPath)
     bar.next()
     
 end = time.time()
 print(end - start, " seconds")
+
+(meshPatches[874]).bakePatchTexture(bm, meshDataPath)
