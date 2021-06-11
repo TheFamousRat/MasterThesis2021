@@ -162,6 +162,7 @@ if not os.path.exists(meshDataPath):
     os.makedirs(meshDataPath)
 
 ##Covering the mesh with patches
+print("===BAKING START===")
 meshPatches = []
 
 #Checking in patches were baked/are still up to date
@@ -187,8 +188,11 @@ if len(meshPatches) == 0:
     #Patches not found, baking them
     print("Building patches for the mesh")
     start = time.time()
+    
+    bar = Bar('Creating patches around vertices', max=len(bm.verts))
     for vert in bm.verts:
         meshPatches.append(createVertexPatch(bm, vert))
+        bar.next()
 
     end = time.time()
     print("Time taken : {} seconds".format(end - start))
@@ -212,6 +216,54 @@ if len(meshPatches) == 0:
         pickle.dump(meshPatches, f)
     print("Done")
 
+#Loading sampled textures
+texturesInfos = []
+patchesTextureFilePath = os.path.join(meshDataPath, 'textures.pkl')
+
+#Trying to load baked data (if it exists)
+if os.path.exists(patchesTextureFilePath):
+    print("Baked textures file found in {}. Loading...".format(patchesTextureFilePath))
+    with lzma.open(patchesTextureFilePath, 'rb') as f:
+        texturesInfos = pickle.load(f) 
+    
+    (meshPatches[0]).bakePatchTexture(bm)
+    patchRef = (meshPatches[0]).pixels
+    patchBaked = texturesInfos[0]
+    
+    print("Checking integrity...")
+    if pickle.dumps(patchRef) != pickle.dumps(patchBaked):
+        print("Outdaded or invalid baked textures found, rebaking all textures")
+        texturesInfos = []
+    else:
+        print("Patch integrity test successful")
+
+if len(texturesInfos) == 0:#Add here logic for checking whether the texture info of patches is correct
+    print("Setting up baking environment...")
+    Patch.Patch.setupBakingEnvironment(bm)
+
+    print("Baking patch textures...")
+
+    bar = Bar('Extracting patch textures', max=len(meshPatches))
+    for i in range(len(meshPatches)):
+        patch = meshPatches[i]
+        patch.bakePatchTexture(bm)
+        texturesInfos.append(patch.pixels)
+        bar.next()
+    
+    print("Dumping into a binary file...")
+    with lzma.open(patchesTextureFilePath, 'wb') as f:
+        pickle.dump(texturesInfos, f)
+    print("Done")
+
+print("Setting texture data...")
+for i in range(len(meshPatches)):
+    patch = meshPatches[i]
+    patch.pixels = texturesInfos[i]
+print("Done")
+
+
+#Rest of the logic
+print("===LOGIC START===")
 print("Drawing the patches' eigenvectors")
 for patch in meshPatches:
     patchCentralPos = patch.getCentralPos(bm)
@@ -219,21 +271,4 @@ for patch in meshPatches:
         dir = patch.eigenVecs[:,i]
         debugDrawing.draw_line(gpencil, gp_frame, (patchCentralPos, patchCentralPos + lineSize * dir), (0.5, 3.0), axisColors[i])
 
-
-##Loading patch color information
-Patch.Patch.setupBakingEnvironment(bm)
-length = 1000
-bar = Bar('Extracting patch texture patches', suffix='%(percent).1f%%', max=length)
-
-start = time.time()
-
-for i in range(length):
-    break
-    patch = meshPatches[i]
-    patch.bakePatchTexture(bm, meshDataPath)
-    bar.next()
-    
-end = time.time()
-print(end - start, " seconds")
-
-(meshPatches[874]).bakePatchTexture(bm, meshDataPath)
+bpy.data.images[Patch.Patch.bakedImgName].pixels = meshPatches[6888].pixels

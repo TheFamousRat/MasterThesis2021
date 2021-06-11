@@ -94,35 +94,31 @@ class Patch:
 
     def calculatePatchEigenValues(self, bmeshObj):
         #Extracting the eigenvalues from the patch's normals' correlation matrix. Used to compare patches between each other
-        normalsConvMat = np.zeros((3,3))
+        normalsCovMat = np.zeros((3,3))
 
         #Normal tensor voting
         for faceIdx in self.getFacesIdxIterator():
             normalVec = bmeshObj.faces[faceIdx].normal
             normalVec = normalVec / np.linalg.norm(normalVec)
             faceNormal = np.matrix(np.array(normalVec)).T #Transforming the face normal into a vector
-            normalsConvMat += (faceNormal @ faceNormal.T) * self.faceWeights[faceIdx]
+            normalsCovMat += (faceNormal @ faceNormal.T) * self.faceWeights[faceIdx]
 
         #Extracting the orthogonal directions from the tensor
         #The signs of the eigenvectors are unreliable here and will be corrected
-        self.eigenVals, self.eigenVecs = la.eigh(normalsConvMat)
+        self.eigenVals, self.eigenVecs = la.eigh(normalsCovMat)
 
-        #Correcting the third eigenvector which estimates the patch normal
-        centralNormal = bmeshObj.verts[self.centerVertexIdx].normal
-        patchNormal = self.eigenVecs[:,2]
-        if np.dot(centralNormal, -patchNormal) > 0.0:
-            self.eigenVecs[:,2] = -self.eigenVecs[:,2]
-
-        #Implementing a proposition by Guo et al. 2012 "Rotational Projection Statistics for 3D Local Surface Description and Object Recognition"
-        centerVertPos = np.array(bmeshObj.verts[self.centerVertexIdx].co)
-        h0 = 0.0
+        #Implementing a proposition by Sheng Ao et al. 2019 "A repeatable and robust local reference frame for 3D surface matching"
+        #Correcting the z-axis (normal)
         h2 = 0.0
         for faceIdx in self.getFacesIdxIterator():
             face = bmeshObj.faces[faceIdx]
             h2 += self.faceWeights[faceIdx] * np.dot(face.normal, self.eigenVecs[:,2])
 
         self.eigenVecs[:,2] = self.eigenVecs[:,2] * np.sign(h2)
-        self.eigenVecs[:,1] = np.cross(self.eigenVecs[:,0], self.eigenVecs[:,2]) 
+        #Correcting the x-axis
+
+        #Finally get the y-axis with the other two corrected vectors
+        self.eigenVecs[:,1] = np.cross(self.eigenVecs[:,0], self.eigenVecs[:,2])
 
         self.rotMatInv = np.linalg.inv(self.eigenVecs)
     
@@ -200,6 +196,7 @@ class Patch:
     imageNodeName = "BakedTextureNode"
     uvLayerNodeName = "BakedUVLayerNode"
     uvExclusionPoint = np.array([2.0, 2.0]) #Location where the UV not to be used are isolated
+    textureMargin = 1
     @staticmethod
     def setupBakingEnvironment(bmeshObj):
         prevRenderEngine = bpy.context.scene.render.engine
@@ -256,13 +253,7 @@ class Patch:
             for loop in vert.link_loops:
                 loop[bmeshObj.loops.layers.uv[Patch.uvLayerName]].uv = Patch.uvExclusionPoint
 
-    def bakePatchTexture(self, bmeshObj, patchDataFilepath):
-        #Remove the rest of the UVs from the focus
-        #!!!!!
-        for vert in bmeshObj.verts:
-            for loop in vert.link_loops:
-                loop[bmeshObj.loops.layers.uv[Patch.uvLayerName]].uv = Patch.uvExclusionPoint
-
+    def bakePatchTexture(self, bmeshObj):
         for face in bmeshObj.faces:
             face.select = False
         
@@ -270,6 +261,7 @@ class Patch:
         for faceIdx in self.getFacesIdxIterator():
             bmeshObj.faces[faceIdx].select = True
         
+        #UV unwrapping using ABF (Angle Based Flattening)
         bpy.ops.uv.unwrap()
         
         #Center the UVs (so that the central vertex is at pos (0.5,0.5)
@@ -311,13 +303,11 @@ class Patch:
             self.setVertUV(bmeshObj, vIdx, Patch.uvLayerName, (rotMat @ (vertUVCoords - centerVec)) + centerVec)
         
         #Bake
-        bpy.ops.object.bake(type='EMIT', use_clear = True, margin = 0)
+        bpy.ops.object.bake(type='EMIT', use_clear = True, margin = Patch.textureMargin)
 
         #Save image
-        #bpy.data.images[Patch.bakedImgName].save_render(os.path.join(patchDataFilepath, "{}.png".format(self.centerVertexIdx)))
-        self.image = bpy.data.images[Patch.bakedImgName].pixels[:]
+        self.pixels = bpy.data.images[Patch.bakedImgName].pixels[:]
 
-        return
         #Remove UVs from sight
         for vertIdx in self.verticesIdxList:
             vert = bmeshObj.verts[vertIdx]
