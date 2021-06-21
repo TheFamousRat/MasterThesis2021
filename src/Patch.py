@@ -263,6 +263,9 @@ class Patch:
         
         #UV unwrapping using ABF (Angle Based Flattening)
         bpy.ops.uv.unwrap()
+
+        for faceIdx in self.getFacesIdxIterator():
+            bmeshObj.faces[faceIdx].select = False
         
         #Center the UVs (so that the central vertex is at pos (0.5,0.5)
         uvMapCenter = np.array([0.5, 0.5])
