@@ -271,4 +271,60 @@ for patch in meshPatches:
         dir = patch.eigenVecs[:,i]
         debugDrawing.draw_line(gpencil, gp_frame, (patchCentralPos, patchCentralPos + lineSize * dir), (0.5, 3.0), axisColors[i])
 
-bpy.data.images[Patch.Patch.bakedImgName].pixels = meshPatches[6888].pixels
+#bpy.data.images[Patch.Patch.bakedImgName].pixels = meshPatches[6888].pixels
+
+#Projecting the normals on a plane
+def sampleProjDist(foo, faceIdx, samplePos, sampleNormal):
+    face = bm.faces[faceIdx[0]]
+    faceNormal = np.array(face.normal)
+    facePoint = np.array(face.verts[0].co)
+    
+    normalsDot = np.dot(sampleNormal, faceNormal)
+    if normalsDot != 0:
+        return abs(np.dot(samplePos - facePoint, faceNormal)/normalsDot)
+    else:
+        return float('inf')
+
+planeScale = 0.05
+sampleRes = 16
+
+consideredPatches = [meshPatches[5535]]
+pixels = list(bpy.data.images[Patch.Patch.bakedImgName].pixels)
+
+for patch in consideredPatches:
+    planeOrigin = np.array(bm.verts[patch.centerVertexIdx].co)
+    v1 = patch.eigenVecs[:,0]
+    v2 = patch.eigenVecs[:,1]
+    
+    #Finding the scale of the plane according to the largest edge length
+    maxEdgeLen = 0.0
+    for edgeIdx in patch.getEdgesIdx(bm):
+        maxEdgeLen = max(maxEdgeLen, bm.edges[edgeIdx].calc_length())
+    planeScale = 2.0 * maxEdgeLen
+    
+    #Setting constants for the sampling
+    scaleFac = planeScale / sampleRes
+    centerFac = (sampleRes - 1)/2.0
+    faceIndices = [[faceIdx] for faceIdx in patch.getFacesIdxIterator()]
+    
+    #Drawing the frame
+    points = [v1 + v2, v1 - v2, -(v1 + v2), v2 - v1]
+    for i in range(4):
+        p0 = planeOrigin + 0.5 * planeScale * points[i]
+        p1 = planeOrigin + 0.5 * planeScale * points[(i+1)%4]
+        debugDrawing.draw_line(gpencil, gp_frame, (p0, p1), (0.5, 0.5), "800080")
+
+    #Sampling
+    for y in range(sampleRes):
+        for x in range(sampleRes):
+            redPixelPos = 4*(x + y * sampleRes)
+            sampleCoords = planeOrigin + scaleFac * (v1 * (x - centerFac) + v2 * (y - centerFac))
+            debugDrawing.draw_line(gpencil, gp_frame, (sampleCoords, sampleCoords), (1.0, 1.0), "800080")
+            
+            projDists = cdist([[0]], faceIndices, sampleProjDist, samplePos = sampleCoords, sampleNormal = patch.eigenVecs[:,2])
+            sampledNormal = np.array(bm.faces[faceIndices[np.argmin(projDists)][0]].normal)
+            
+            for i in range(3):
+                pixels[redPixelPos + i] = (sampledNormal[i] + 1.0)/2.0
+                
+    bpy.data.images[Patch.Patch.bakedImgName].pixels = pixels

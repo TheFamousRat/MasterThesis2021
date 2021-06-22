@@ -37,7 +37,7 @@ class Patch:
                 self.verticesIdxList.add(vert.index)
         self.verticesIdxList = np.array(list(self.verticesIdxList))
 
-        self.image = None
+        self.pixels = []
 
         self.calculateIndicators(bmeshObj)
 
@@ -262,11 +262,11 @@ class Patch:
             bmeshObj.faces[faceIdx].select = True
         
         #UV unwrapping using ABF (Angle Based Flattening)
-        bpy.ops.uv.unwrap()
+        bpy.ops.uv.unwrap(method = "ANGLE_BASED")
 
         for faceIdx in self.getFacesIdxIterator():
             bmeshObj.faces[faceIdx].select = False
-        
+
         #Center the UVs (so that the central vertex is at pos (0.5,0.5)
         uvMapCenter = np.array([0.5, 0.5])
         posShift = uvMapCenter - np.array(self.getVertUV(bmeshObj, self.centerVertexIdx, Patch.uvLayerName))
@@ -306,7 +306,7 @@ class Patch:
             self.setVertUV(bmeshObj, vIdx, Patch.uvLayerName, (rotMat @ (vertUVCoords - centerVec)) + centerVec)
         
         #Bake
-        bpy.ops.object.bake(type='EMIT', use_clear = True, margin = Patch.textureMargin)
+        bpy.ops.object.bake(type='DIFFUSE', pass_filter = {'COLOR'}, use_clear = True, margin = Patch.textureMargin)
 
         #Save image
         self.pixels = bpy.data.images[Patch.bakedImgName].pixels[:]
