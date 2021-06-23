@@ -118,7 +118,7 @@ class Patch:
         #Correcting the x-axis
 
         #Finally get the y-axis with the other two corrected vectors
-        self.eigenVecs[:,1] = np.cross(self.eigenVecs[:,0], self.eigenVecs[:,2])
+        self.eigenVecs[:,1] = -np.cross(self.eigenVecs[:,0], self.eigenVecs[:,2])
 
         self.rotMatInv = np.linalg.inv(self.eigenVecs)
     

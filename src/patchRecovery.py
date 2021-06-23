@@ -247,8 +247,9 @@ if len(texturesInfos) == 0:#Add here logic for checking whether the texture info
     for i in range(len(meshPatches)):
         patch = meshPatches[i]
         patch.bakePatchTexture(bm)
-        texturesInfos.append(patch.pixels)
         bar.next()
+        
+    texturesInfos = [meshPatches[i].pixels for i in range(len(meshPatches))]
     
     print("Dumping into a binary file...")
     with lzma.open(patchesTextureFilePath, 'wb') as f:
@@ -260,7 +261,6 @@ for i in range(len(meshPatches)):
     patch = meshPatches[i]
     patch.pixels = texturesInfos[i]
 print("Done")
-
 
 #Rest of the logic
 print("===LOGIC START===")
@@ -274,21 +274,34 @@ for patch in meshPatches:
 #bpy.data.images[Patch.Patch.bakedImgName].pixels = meshPatches[6888].pixels
 
 #Projecting the normals on a plane
-def sampleProjDist(foo, faceIdx, samplePos, sampleNormal):
+import mathutils
+def rayFaceDist(foo, faceIdx, samplePos, sampleNormal):
     face = bm.faces[faceIdx[0]]
-    faceNormal = np.array(face.normal)
-    facePoint = np.array(face.verts[0].co)
     
-    normalsDot = np.dot(sampleNormal, faceNormal)
-    if normalsDot != 0:
-        return abs(np.dot(samplePos - facePoint, faceNormal)/normalsDot)
+    intersPoint = mathutils.geometry.intersect_ray_tri(face.verts[0].co, face.verts[1].co, face.verts[2].co, -sampleNormal, samplePos)
+    
+    if intersPoint != None:
+        return 0.0
     else:
-        return float('inf')
+        minDist = float('inf')
+        for i in range(3):
+            v0 = np.array(face.verts[i].co)
+            v1 = np.array(face.verts[(i+1)%3].co)
+            C = samplePos - v0
+            D = v0 - v1
+            r = sampleNormal
+            dot_rD = np.dot(r, D)
+            dot_rr = np.dot(r, r)
+            u = min(1.0, max(0.0, np.dot(C, r * dot_rD - D * dot_rr) / (dot_rr * np.dot(D, D) - dot_rD**2)))
+            t = max(0.0, - (np.dot(C, r) + u * dot_rD) / dot_rr)
+            minDist = min(minDist, np.linalg.norm((samplePos + t * r) - (v0 + u * (v1 - v0))))
+            
+        return minDist
 
 planeScale = 0.05
 sampleRes = 16
 
-consideredPatches = [meshPatches[5535]]
+consideredPatches = [meshPatches[1543]]
 pixels = list(bpy.data.images[Patch.Patch.bakedImgName].pixels)
 
 for patch in consideredPatches:
@@ -306,6 +319,8 @@ for patch in consideredPatches:
     scaleFac = planeScale / sampleRes
     centerFac = (sampleRes - 1)/2.0
     faceIndices = [[faceIdx] for faceIdx in patch.getFacesIdxIterator()]
+    for faceIdx in faceIndices:
+        bm.faces[faceIdx[0]].select = True
     
     #Drawing the frame
     points = [v1 + v2, v1 - v2, -(v1 + v2), v2 - v1]
@@ -319,11 +334,19 @@ for patch in consideredPatches:
         for x in range(sampleRes):
             redPixelPos = 4*(x + y * sampleRes)
             sampleCoords = planeOrigin + scaleFac * (v1 * (x - centerFac) + v2 * (y - centerFac))
-            debugDrawing.draw_line(gpencil, gp_frame, (sampleCoords, sampleCoords), (1.0, 1.0), "800080")
+            debugDrawing.draw_line(gpencil, gp_frame, (sampleCoords, sampleCoords), (2.0, 2.0), "800080")
             
-            projDists = cdist([[0]], faceIndices, sampleProjDist, samplePos = sampleCoords, sampleNormal = patch.eigenVecs[:,2])
-            sampledNormal = np.array(bm.faces[faceIndices[np.argmin(projDists)][0]].normal)
+            projDists = cdist([[0]], faceIndices, rayFaceDist, samplePos = sampleCoords, sampleNormal = patch.eigenVecs[:,2])
+            crossedFacesPos = np.where(projDists == 0)[1]
+            faceIdx = 0
+            if len(crossedFacesPos) <= 1:
+                #Only one triangle was crossed, we pick it
+                faceIdx = faceIndices[np.argmin(projDists)][0]
+            else:
+                #More than one triangle was crossed, we pick the closest one
+                pass
             
+            sampledNormal = np.array(bm.faces[faceIdx].normal)
             for i in range(3):
                 pixels[redPixelPos + i] = (sampledNormal[i] + 1.0)/2.0
                 
