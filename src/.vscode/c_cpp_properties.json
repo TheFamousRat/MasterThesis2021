@@ -4,15 +4,21 @@
             "name": "Linux",
             "includePath": [
                 "${workspaceFolder}/**",
-                "/home/thefamousrat/Documents/Cpp/pmp-library/src/pmp",
-                "/home/thefamousrat/Documents/Cpp/pmp-library/external",
-                "/home/thefamousrat/Documents/Cpp/pmp-library/external/eigen"
+                "/home/home/thefamousrat/Documents/Godot/godot-cpp/include",
+                "/home/home/thefamousrat/Documents/Godot/godot-cpp/include/core",
+                "/home/home/thefamousrat/Documents/Godot/godot-cpp/include/gen",
+                "/home/home/thefamousrat/Documents/Godot/godot-cpp/godot-headers",
+                "/home/home/thefamousrat/Documents/Godot/Catapulto/addons/GodotFlowField/src/",
+                "/home/home/thefamousrat/Documents/Godot/Catapulto/addons/GodotFlowField/src/helpers/",
+                "/home/home/thefamousrat/Documents/Godot/Catapulto/addons/GodotFlowField/src/recastnavigation/Detour/Include/",
+                "/home/home/thefamousrat/Documents/Godot/Catapulto/addons/GodotFlowField/src/recastnavigation/DetourTileCache/Include/",
+                "/home/home/thefamousrat/Documents/Godot/Catapulto/addons/GodotFlowField/src/recastnavigation/Recast/Include/"
             ],
             "defines": [],
-            "compilerPath": "/usr/bin/clang",
-            "cStandard": "c11",
-            "cppStandard": "c++14",
-            "intelliSenseMode": "linux-clang-x64"
+            "compilerPath": "/usr/bin/gcc",
+            "cStandard": "gnu17",
+            "cppStandard": "gnu++17",
+            "intelliSenseMode": "linux-gcc-x64"
         }
     ],
     "version": 4

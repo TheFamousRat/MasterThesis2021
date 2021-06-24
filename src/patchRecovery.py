@@ -266,88 +266,29 @@ print("Done")
 print("===LOGIC START===")
 print("Drawing the patches' eigenvectors")
 for patch in meshPatches:
-    patchCentralPos = patch.getCentralPos(bm)
-    for i in range(3):
-        dir = patch.eigenVecs[:,i]
-        debugDrawing.draw_line(gpencil, gp_frame, (patchCentralPos, patchCentralPos + lineSize * dir), (0.5, 3.0), axisColors[i])
+    patch.drawLRF(gpencil, gp_frame, bm)
 
 #bpy.data.images[Patch.Patch.bakedImgName].pixels = meshPatches[6888].pixels
 
 #Projecting the normals on a plane
-import mathutils
-def rayFaceDist(foo, faceIdx, samplePos, sampleNormal):
-    face = bm.faces[faceIdx[0]]
-    
-    intersPoint = mathutils.geometry.intersect_ray_tri(face.verts[0].co, face.verts[1].co, face.verts[2].co, -sampleNormal, samplePos)
-    
-    if intersPoint != None:
-        return 0.0
-    else:
-        minDist = float('inf')
-        for i in range(3):
-            v0 = np.array(face.verts[i].co)
-            v1 = np.array(face.verts[(i+1)%3].co)
-            C = samplePos - v0
-            D = v0 - v1
-            r = sampleNormal
-            dot_rD = np.dot(r, D)
-            dot_rr = np.dot(r, r)
-            u = min(1.0, max(0.0, np.dot(C, r * dot_rD - D * dot_rr) / (dot_rr * np.dot(D, D) - dot_rD**2)))
-            t = max(0.0, - (np.dot(C, r) + u * dot_rD) / dot_rr)
-            minDist = min(minDist, np.linalg.norm((samplePos + t * r) - (v0 + u * (v1 - v0))))
-            
-        return minDist
+patch = meshPatches[3382]
 
-planeScale = 0.05
-sampleRes = 16
+start = time.time()
 
-consideredPatches = [meshPatches[1543]]
+for i in range(100):
+    patch.samplePatchNormals(bm)
+    
+end = time.time()
+print("Time taken : {} seconds".format(end - start))
+
+sampleRes = Patch.Patch.sampleRes
 pixels = list(bpy.data.images[Patch.Patch.bakedImgName].pixels)
+for y in range(sampleRes):
+    for x in range(sampleRes):
+        arrayPos = x + y * sampleRes
+        redPixelPos = 4*arrayPos
+        sampledNormal = patch.sampledNormals[arrayPos]
+        for i in range(3):
+            pixels[redPixelPos + i] = (sampledNormal[i] + 1) / 2.0
 
-for patch in consideredPatches:
-    planeOrigin = np.array(bm.verts[patch.centerVertexIdx].co)
-    v1 = patch.eigenVecs[:,0]
-    v2 = patch.eigenVecs[:,1]
-    
-    #Finding the scale of the plane according to the largest edge length
-    maxEdgeLen = 0.0
-    for edgeIdx in patch.getEdgesIdx(bm):
-        maxEdgeLen = max(maxEdgeLen, bm.edges[edgeIdx].calc_length())
-    planeScale = 2.0 * maxEdgeLen
-    
-    #Setting constants for the sampling
-    scaleFac = planeScale / sampleRes
-    centerFac = (sampleRes - 1)/2.0
-    faceIndices = [[faceIdx] for faceIdx in patch.getFacesIdxIterator()]
-    for faceIdx in faceIndices:
-        bm.faces[faceIdx[0]].select = True
-    
-    #Drawing the frame
-    points = [v1 + v2, v1 - v2, -(v1 + v2), v2 - v1]
-    for i in range(4):
-        p0 = planeOrigin + 0.5 * planeScale * points[i]
-        p1 = planeOrigin + 0.5 * planeScale * points[(i+1)%4]
-        debugDrawing.draw_line(gpencil, gp_frame, (p0, p1), (0.5, 0.5), "800080")
-
-    #Sampling
-    for y in range(sampleRes):
-        for x in range(sampleRes):
-            redPixelPos = 4*(x + y * sampleRes)
-            sampleCoords = planeOrigin + scaleFac * (v1 * (x - centerFac) + v2 * (y - centerFac))
-            debugDrawing.draw_line(gpencil, gp_frame, (sampleCoords, sampleCoords), (2.0, 2.0), "800080")
-            
-            projDists = cdist([[0]], faceIndices, rayFaceDist, samplePos = sampleCoords, sampleNormal = patch.eigenVecs[:,2])
-            crossedFacesPos = np.where(projDists == 0)[1]
-            faceIdx = 0
-            if len(crossedFacesPos) <= 1:
-                #Only one triangle was crossed, we pick it
-                faceIdx = faceIndices[np.argmin(projDists)][0]
-            else:
-                #More than one triangle was crossed, we pick the closest one
-                pass
-            
-            sampledNormal = np.array(bm.faces[faceIdx].normal)
-            for i in range(3):
-                pixels[redPixelPos + i] = (sampledNormal[i] + 1.0)/2.0
-                
-    bpy.data.images[Patch.Patch.bakedImgName].pixels = pixels
+bpy.data.images[Patch.Patch.bakedImgName].pixels = pixels

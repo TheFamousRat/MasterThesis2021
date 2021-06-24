@@ -1,13 +1,33 @@
-from numpy.lib.function_base import angle
-import bpy
 import os
 import math
 import numpy as np
 import scipy.linalg as la
 import itertools
+import ctypes
+
+import bpy
+import mathutils
+
 from PIL import Image
+from numpy.lib.function_base import angle
+from scipy.spatial.distance import cdist
+
+import debugDrawing
 
 class Patch:
+    ##Static constants
+    #Related to texture baking
+    uvLayerName = "tempProj"
+    bakedImgName = "bakedImage"
+    bakedImgSize = 16
+    imageNodeName = "BakedTextureNode"
+    uvLayerNodeName = "BakedUVLayerNode"
+    uvExclusionPoint = np.array([2.0, 2.0]) #Location where the UV not to be used are isolated
+    textureMargin = 1
+    #Related to patch sampling
+    planeScale = 0.05
+    sampleRes = 16
+
     def __init__(self, bmeshObj, centerVertexIdx, ringsNum):
         #Creates a patch, built from a central vertex and its ringsNum neighbouring rings
         self.centerVertexIdx = centerVertexIdx
@@ -49,6 +69,7 @@ class Patch:
         self.calculateBarycenter(bmeshObj)
         self.calculateFaceWeights(bmeshObj)
         self.calculatePatchEigenValues(bmeshObj)
+        #self.samplePatchNormals(bmeshObj)
 
     def calculateTotalArea(self, bmeshObj):
         """
@@ -190,13 +211,6 @@ class Patch:
             if loop.face.index in facesList:
                 loop[bmeshObj.loops.layers.uv[uvLayerName]].uv = newPos
 
-    uvLayerName = "tempProj"
-    bakedImgName = "bakedImage"
-    bakedImgSize = 16
-    imageNodeName = "BakedTextureNode"
-    uvLayerNodeName = "BakedUVLayerNode"
-    uvExclusionPoint = np.array([2.0, 2.0]) #Location where the UV not to be used are isolated
-    textureMargin = 1
     @staticmethod
     def setupBakingEnvironment(bmeshObj):
         prevRenderEngine = bpy.context.scene.render.engine
@@ -316,3 +330,167 @@ class Patch:
             vert = bmeshObj.verts[vertIdx]
             for loop in vert.link_loops:
                 loop[bmeshObj.loops.layers.uv[Patch.uvLayerName]].uv = Patch.uvExclusionPoint
+
+    def getFaceRayIntersect(face, rayNorm, rayOrig):
+        """
+        Returns the point of intersection between a face and a ray emitted from a certain origin (or None if none is found)
+        """
+        intersPoint = mathutils.geometry.intersect_ray_tri(face.verts[0].co, face.verts[1].co, face.verts[2].co, -rayNorm, rayOrig)
+        if intersPoint == None:
+            intersPoint = mathutils.geometry.intersect_ray_tri(face.verts[0].co, face.verts[1].co, face.verts[2].co, rayNorm, rayOrig)
+
+        return intersPoint
+
+    def rayFaceDist_inter(foo, faceIdx, samplePos, sampleNormal, bmeshObj):
+        """
+        Distance between the sample position and the closest point on a given face to that sample's emitted ray
+        """
+        #Returns the smallest distance between a ray and a face (its triangle)
+        face = bmeshObj.faces[faceIdx[0]]
+        
+        intersPoint = Patch.getFaceRayIntersect(face, sampleNormal, samplePos)
+            
+        if intersPoint != None:
+            #The ray intersects with the triangle : the dist is zero
+            return 0.0
+
+            #return np.linalg.norm(np.array(intersPoint) - samplePos)
+        else:
+            #The ray doesn't intersect with the triangle : its smallest distance is the smallest distance to one of its edges
+            r = sampleNormal
+            dot_rr = np.dot(r, r)
+            
+            minDist = float('inf')
+            for i in range(3):
+                v0 = np.array(face.verts[i].co)
+                v1 = np.array(face.verts[(i+1)%3].co)
+                C = samplePos - v0
+                D = v0 - v1
+                dot_rD = np.dot(r, D)
+                u = min(1.0, max(0.0, np.dot(C, r * dot_rD - D * dot_rr) / (dot_rr * np.dot(D, D) - dot_rD**2)))
+                t = - (np.dot(C, r) + u * dot_rD) / dot_rr
+                minDist = min(minDist, np.linalg.norm((samplePos + t * r) - (v0 + u * (v1 - v0))))
+                
+            return minDist
+
+    def rayFaceDist_noInter(foo, faceIdx, samplePos, sampleNormal, bmeshObj):
+        """
+        Distance between the ray and the closest triangle edge position (considered that there is no intersection)
+        """
+        #Returns the smallest distance between a ray and a face (its triangle)
+        face = bmeshObj.faces[faceIdx[0]]
+        
+        #The ray doesn't intersect with the triangle : its smallest distance is the smallest distance to one of its edges
+        r = sampleNormal
+        dot_rr = np.dot(r, r)
+        
+        minDist = float('inf')
+        for i in range(3):
+            v0 = np.array(face.verts[i].co)
+            v1 = np.array(face.verts[(i+1)%3].co)
+            C = samplePos - v0
+            D = v0 - v1
+            dot_rD = np.dot(r, D)
+            u = min(1.0, max(0.0, np.dot(C, r * dot_rD - D * dot_rr) / (dot_rr * np.dot(D, D) - dot_rD**2)))
+            t = - (np.dot(C, r) + u * dot_rD) / dot_rr
+            minDist = min(minDist, np.linalg.norm((samplePos + t * r) - (v0 + u * (v1 - v0))))
+            
+        return minDist 
+
+    def samplePatchNormals(self, bmeshObj):
+        planeOrigin = np.array(bmeshObj.verts[self.centerVertexIdx].co)
+        v1 = self.eigenVecs[:,0]
+        v2 = self.eigenVecs[:,1]
+        
+        #Finding the scale of the plane according to the largest edge length
+        maxEdgeLen = 0.0
+        for edgeIdx in self.getEdgesIdx(bmeshObj):
+            maxEdgeLen = max(maxEdgeLen, bmeshObj.edges[edgeIdx].calc_length())
+        planeScale = 2.0 * maxEdgeLen
+        
+        #Setting constants for the sampling
+        scaleFac = planeScale / Patch.sampleRes
+        centerFac = (Patch.sampleRes - 1)/2.0
+        faceIndices = [[faceIdx] for faceIdx in self.getFacesIdxIterator()]
+
+        #Sampling
+        self.sampledNormals = [np.zeros((3,1)) for i in range(Patch.sampleRes**2)]
+        samplePlaneNormal = self.eigenVecs[:,2]
+        for y in range(Patch.sampleRes):
+            for x in range(Patch.sampleRes):
+                sampleCoords = planeOrigin + scaleFac * (v1 * (x - centerFac) + v2 * (y - centerFac))
+                
+                #Checking if one triangle was crossed (and only one)
+                facesCrossed = [(True if Patch.getFaceRayIntersect(bmeshObj.faces[faceIdx[0]], samplePlaneNormal, sampleCoords) != None else False) for faceIdx in faceIndices]
+                facesCrossed = np.array(facesCrossed)
+                triangleCrossedCount = sum(facesCrossed)
+                #Depending on the crossed (or not) triangles, getting the face to sample from
+                faceIdx = 0
+                if triangleCrossedCount == 1:
+                    #At most one triangle was crossed : we pick the normal from the closest face
+                    faceIdx = faceIndices[np.where(facesCrossed)[0][0]][0]
+                elif triangleCrossedCount > 1:
+                    #More than one triangle was crossed, we pick the closest one
+                    minDist = float('inf')
+                    
+                    crossedFacesPos = np.where(facesCrossed == 0)[1]
+
+                    for faceIdxPos in crossedFacesPos:
+                        faceIdx_ = faceIndices[faceIdxPos][0]
+                        face = bmeshObj.faces[faceIdx_]
+                        hitCoords = Patch.getFaceRayIntersect(face, samplePlaneNormal, sampleCoords)
+                        
+                        dist = np.linalg.norm(np.array(hitCoords) - sampleCoords)
+                        if dist < minDist:
+                            minDist = dist
+                            faceIdx = faceIdx_
+                else:
+                    #Distances of triangles from the RayCast
+                    triDists = cdist([[0]], faceIndices, Patch.rayFaceDist_noInter, samplePos = sampleCoords, sampleNormal = samplePlaneNormal, bmeshObj = bmeshObj)
+
+                    faceIdx = faceIndices[np.argmin(triDists)][0]
+                        
+                self.sampledNormals[x + y * Patch.sampleRes] = self.rotMatInv @ np.array(bmeshObj.faces[faceIdx].normal)
+    
+    defaultAxisColors = ["ff0000", "00ff00", "0000ff"]
+    def drawLRF(self, gpencil, gp_frame, bmeshObj, lineSize = 0.02, startThck = 0.5, endThck = 3.0, axisColors = defaultAxisColors):
+        """
+        Draws in a grease pencil canvas the eigenvectors associated to this patch's normal tensor
+        """
+        patchCentralPos = self.getCentralPos(bmeshObj)
+        for i in range(3):
+            dir = self.eigenVecs[:,i]
+            debugDrawing.draw_line(gpencil, gp_frame, (patchCentralPos, patchCentralPos + lineSize * dir), (startThck, endThck), axisColors[i])
+
+    def drawNormalSamplePlane(self, gpencil, gp_frame, bmeshObj, color = "800080"):
+        """
+        Draws in a grease pencil canvas the plane used to sample the normals 
+        """
+        planeOrigin = np.array(bmeshObj.verts[self.centerVertexIdx].co)
+        v1 = self.eigenVecs[:,0]
+        v2 = self.eigenVecs[:,1]
+        
+        #Finding the scale of the plane according to the largest edge length
+        maxEdgeLen = 0.0
+        for edgeIdx in self.getEdgesIdx(bmeshObj):
+            maxEdgeLen = max(maxEdgeLen, bmeshObj.edges[edgeIdx].calc_length())
+        planeScale = 2.0 * maxEdgeLen
+        
+        #Setting constants for the sampling
+        scaleFac = planeScale / Patch.sampleRes
+        centerFac = (Patch.sampleRes - 1)/2.0
+        
+        #Drawing the frame
+        points = [v1 + v2, v1 - v2, -(v1 + v2), v2 - v1]
+        for i in range(4):
+            p0 = planeOrigin + 0.5 * planeScale * points[i]
+            p1 = planeOrigin + 0.5 * planeScale * points[(i+1)%4]
+            debugDrawing.draw_line(gpencil, gp_frame, (p0, p1), (0.5, 0.5), color)
+
+        #Sampling
+        for y in range(Patch.sampleRes):
+            for x in range(Patch.sampleRes):
+                sampleCoords = planeOrigin + scaleFac * (v1 * (x - centerFac) + v2 * (y - centerFac))
+                debugDrawing.draw_line(gpencil, gp_frame, (sampleCoords, sampleCoords), (2.0, 2.0), color)
+
+    
