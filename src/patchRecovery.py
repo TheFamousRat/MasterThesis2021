@@ -20,6 +20,7 @@ import numpy as np
 from scipy.spatial.distance import cdist
 from sklearn.metrics import pairwise_distances_argmin_min
 from scipy.optimize import linear_sum_assignment
+from sklearn.neighbors import KDTree
 #Show progress bar utility
 from progress.bar import Bar
 
@@ -268,27 +269,20 @@ print("Drawing the patches' eigenvectors")
 for patch in meshPatches:
     patch.drawLRF(gpencil, gp_frame, bm)
 
-#bpy.data.images[Patch.Patch.bakedImgName].pixels = meshPatches[6888].pixels
+##Building a KD-tree to find the k nearest neighbours of any point
+def getPatchNormalColumnVector(patch):
+    return np.concatenate(np.array([patch.sampledNormals[i] for i in range(Patch.Patch.sampleRes**2)]), axis = 0)
 
-#Projecting the normals on a plane
-patch = meshPatches[1604]
+#Building the tree
+clusterSize = 10
+topoFeatures = [patch.eigenVals / np.linalg.norm(patch.eigenVals) for patch in meshPatches]
+kdt = KDTree(topoFeatures,  leaf_size = 30, metric = 'euclidean')
 
-start = time.time()
+#Building the patch matrix for a patch
+dists, neighIdx = kdt.query([topoFeatures[0]], k=clusterSize)
+neighIdx = neighIdx[0]
+patchMatrix = np.zeros((3 * Patch.Patch.sampleRes**2, clusterSize))
+for i in range(clusterSize):
+    patch = meshPatches[neighIdx[i]]
+    patchMatrix[:,i] = getPatchNormalColumnVector(patch)
 
-for i in range(100):
-    patch.samplePatchNormals(bm)
-    
-end = time.time()
-print("Time taken : {} seconds".format(end - start))
-
-sampleRes = Patch.Patch.sampleRes
-pixels = list(bpy.data.images[Patch.Patch.bakedImgName].pixels)
-for y in range(sampleRes):
-    for x in range(sampleRes):
-        arrayPos = x + y * sampleRes
-        redPixelPos = 4*arrayPos
-        sampledNormal = patch.sampledNormals[arrayPos]
-        for i in range(3):
-            pixels[redPixelPos + i] = (sampledNormal[i] + 1) / 2.0
-
-bpy.data.images[Patch.Patch.bakedImgName].pixels = pixels

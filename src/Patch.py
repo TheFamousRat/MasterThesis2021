@@ -6,7 +6,6 @@ import itertools
 import ctypes
 
 import bpy
-import mathutils
 
 from PIL import Image
 from numpy.lib.function_base import angle
@@ -26,7 +25,7 @@ class Patch:
     textureMargin = 1
     #Related to patch sampling
     planeScale = 0.05
-    sampleRes = 16
+    sampleRes = 8
 
     def __init__(self, bmeshObj, centerVertexIdx, ringsNum):
         #Creates a patch, built from a central vertex and its ringsNum neighbouring rings
@@ -69,7 +68,7 @@ class Patch:
         self.calculateBarycenter(bmeshObj)
         self.calculateFaceWeights(bmeshObj)
         self.calculatePatchEigenValues(bmeshObj)
-        #self.samplePatchNormals(bmeshObj)
+        self.samplePatchNormals(bmeshObj)
 
     def calculateTotalArea(self, bmeshObj):
         """
