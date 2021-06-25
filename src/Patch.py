@@ -331,74 +331,8 @@ class Patch:
             for loop in vert.link_loops:
                 loop[bmeshObj.loops.layers.uv[Patch.uvLayerName]].uv = Patch.uvExclusionPoint
 
-    def getFaceRayIntersect(face, rayNorm, rayOrig):
-        """
-        Returns the point of intersection between a face and a ray emitted from a certain origin (or None if none is found)
-        """
-        intersPoint = mathutils.geometry.intersect_ray_tri(face.verts[0].co, face.verts[1].co, face.verts[2].co, -rayNorm, rayOrig)
-        if intersPoint == None:
-            intersPoint = mathutils.geometry.intersect_ray_tri(face.verts[0].co, face.verts[1].co, face.verts[2].co, rayNorm, rayOrig)
-
-        return intersPoint
-
-    def rayFaceDist_inter(foo, faceIdx, samplePos, sampleNormal, bmeshObj):
-        """
-        Distance between the sample position and the closest point on a given face to that sample's emitted ray
-        """
-        #Returns the smallest distance between a ray and a face (its triangle)
-        face = bmeshObj.faces[faceIdx[0]]
-        
-        intersPoint = Patch.getFaceRayIntersect(face, sampleNormal, samplePos)
-            
-        if intersPoint != None:
-            #The ray intersects with the triangle : the dist is zero
-            return 0.0
-
-            #return np.linalg.norm(np.array(intersPoint) - samplePos)
-        else:
-            #The ray doesn't intersect with the triangle : its smallest distance is the smallest distance to one of its edges
-            r = sampleNormal
-            dot_rr = np.dot(r, r)
-            
-            minDist = float('inf')
-            for i in range(3):
-                v0 = np.array(face.verts[i].co)
-                v1 = np.array(face.verts[(i+1)%3].co)
-                C = samplePos - v0
-                D = v0 - v1
-                dot_rD = np.dot(r, D)
-                u = min(1.0, max(0.0, np.dot(C, r * dot_rD - D * dot_rr) / (dot_rr * np.dot(D, D) - dot_rD**2)))
-                t = - (np.dot(C, r) + u * dot_rD) / dot_rr
-                minDist = min(minDist, np.linalg.norm((samplePos + t * r) - (v0 + u * (v1 - v0))))
-                
-            return minDist
-
-    def rayFaceDist_noInter(foo, faceIdx, samplePos, sampleNormal, bmeshObj):
-        """
-        Distance between the ray and the closest triangle edge position (considered that there is no intersection)
-        """
-        #Returns the smallest distance between a ray and a face (its triangle)
-        face = bmeshObj.faces[faceIdx[0]]
-        
-        #The ray doesn't intersect with the triangle : its smallest distance is the smallest distance to one of its edges
-        r = sampleNormal
-        dot_rr = np.dot(r, r)
-        
-        minDist = float('inf')
-        for i in range(3):
-            v0 = np.array(face.verts[i].co)
-            v1 = np.array(face.verts[(i+1)%3].co)
-            C = samplePos - v0
-            D = v0 - v1
-            dot_rD = np.dot(r, D)
-            u = min(1.0, max(0.0, np.dot(C, r * dot_rD - D * dot_rr) / (dot_rr * np.dot(D, D) - dot_rD**2)))
-            t = - (np.dot(C, r) + u * dot_rD) / dot_rr
-            minDist = min(minDist, np.linalg.norm((samplePos + t * r) - (v0 + u * (v1 - v0))))
-            
-        return minDist 
-
     #Setting up C++ functions
-    testlib = ctypes.CDLL('/home/home/thefamousrat/Documents/KU Leuven/Master Thesis/MasterThesis2021/src/test/libutils.so')
+    testlib = ctypes.CDLL('/home/home/thefamousrat/Documents/KU Leuven/Master Thesis/MasterThesis2021/src/c_utils/libutils.so')
     testlib.getClosestFaceFromRay.argtypes = (ctypes.POINTER(ctypes.c_double), ctypes.c_uint, ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double))
     testlib.getClosestFaceFromRay.restype = ctypes.c_int
 

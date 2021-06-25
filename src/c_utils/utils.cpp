@@ -101,11 +101,11 @@ int _getClosestFaceFromRay(double* facePointsArr, unsigned int faceCount, double
     else {
         //No triangle crossed : we pick the closest face the ray was from
         float smallestDist = std::numeric_limits<float>::infinity();
+        float dot_rr = rayDir.dot(rayDir);
 
         for (int i(0) ; i < faceCount ; i++) {
 
             //The ray doesn't intersect with the triangle : its smallest distance is the smallest distance to one of its edges
-            float dot_rr = rayDir.dot(rayDir);
             int faceCoordsStart = i * 9;
             float minEdgeDist = std::numeric_limits<float>::infinity();
 
