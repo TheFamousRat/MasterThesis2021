@@ -271,7 +271,7 @@ for patch in meshPatches:
 #bpy.data.images[Patch.Patch.bakedImgName].pixels = meshPatches[6888].pixels
 
 #Projecting the normals on a plane
-patch = meshPatches[3382]
+patch = meshPatches[1604]
 
 start = time.time()
 

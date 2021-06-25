@@ -397,6 +397,11 @@ class Patch:
             
         return minDist 
 
+    #Setting up C++ functions
+    testlib = ctypes.CDLL('/home/home/thefamousrat/Documents/KU Leuven/Master Thesis/MasterThesis2021/src/test/libutils.so')
+    testlib.getClosestFaceFromRay.argtypes = (ctypes.POINTER(ctypes.c_double), ctypes.c_uint, ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double))
+    testlib.getClosestFaceFromRay.restype = ctypes.c_int
+
     def samplePatchNormals(self, bmeshObj):
         planeOrigin = np.array(bmeshObj.verts[self.centerVertexIdx].co)
         v1 = self.eigenVecs[:,0]
@@ -408,48 +413,28 @@ class Patch:
             maxEdgeLen = max(maxEdgeLen, bmeshObj.edges[edgeIdx].calc_length())
         planeScale = 2.0 * maxEdgeLen
         
-        #Setting constants for the sampling
+        ##Setting constants for the sampling
+        #Python
         scaleFac = planeScale / Patch.sampleRes
         centerFac = (Patch.sampleRes - 1)/2.0
-        faceIndices = [[faceIdx] for faceIdx in self.getFacesIdxIterator()]
+        faceIndices = [faceIdx for faceIdx in self.getFacesIdxIterator()]
+        #C++
+        samplePlaneNormal = -self.eigenVecs[:,2]
+        samplePlaneNormal_ptr = samplePlaneNormal.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+        facePoints = np.array([[np.array(bmeshObj.faces[faceIdx].verts[i].co) for i in range(3)] for faceIdx in faceIndices])
+        facePoints_ptr = facePoints.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+        facePointsCount = len(faceIndices)
 
         #Sampling
         self.sampledNormals = [np.zeros((3,1)) for i in range(Patch.sampleRes**2)]
-        samplePlaneNormal = self.eigenVecs[:,2]
         for y in range(Patch.sampleRes):
             for x in range(Patch.sampleRes):
                 sampleCoords = planeOrigin + scaleFac * (v1 * (x - centerFac) + v2 * (y - centerFac))
+                sampleCoords_ptr = sampleCoords.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
                 
-                #Checking if one triangle was crossed (and only one)
-                facesCrossed = [(True if Patch.getFaceRayIntersect(bmeshObj.faces[faceIdx[0]], samplePlaneNormal, sampleCoords) != None else False) for faceIdx in faceIndices]
-                facesCrossed = np.array(facesCrossed)
-                triangleCrossedCount = sum(facesCrossed)
-                #Depending on the crossed (or not) triangles, getting the face to sample from
-                faceIdx = 0
-                if triangleCrossedCount == 1:
-                    #At most one triangle was crossed : we pick the normal from the closest face
-                    faceIdx = faceIndices[np.where(facesCrossed)[0][0]][0]
-                elif triangleCrossedCount > 1:
-                    #More than one triangle was crossed, we pick the closest one
-                    minDist = float('inf')
-                    
-                    crossedFacesPos = np.where(facesCrossed == 0)[1]
+                faceIdxPos = Patch.testlib.getClosestFaceFromRay(facePoints_ptr, facePointsCount, sampleCoords_ptr, samplePlaneNormal_ptr)
+                faceIdx = faceIndices[faceIdxPos]
 
-                    for faceIdxPos in crossedFacesPos:
-                        faceIdx_ = faceIndices[faceIdxPos][0]
-                        face = bmeshObj.faces[faceIdx_]
-                        hitCoords = Patch.getFaceRayIntersect(face, samplePlaneNormal, sampleCoords)
-                        
-                        dist = np.linalg.norm(np.array(hitCoords) - sampleCoords)
-                        if dist < minDist:
-                            minDist = dist
-                            faceIdx = faceIdx_
-                else:
-                    #Distances of triangles from the RayCast
-                    triDists = cdist([[0]], faceIndices, Patch.rayFaceDist_noInter, samplePos = sampleCoords, sampleNormal = samplePlaneNormal, bmeshObj = bmeshObj)
-
-                    faceIdx = faceIndices[np.argmin(triDists)][0]
-                        
                 self.sampledNormals[x + y * Patch.sampleRes] = self.rotMatInv @ np.array(bmeshObj.faces[faceIdx].normal)
     
     defaultAxisColors = ["ff0000", "00ff00", "0000ff"]
