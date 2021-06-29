@@ -66,9 +66,8 @@ class Patch:
         """
         self.calculateTotalArea(bmeshObj)
         self.calculateBarycenter(bmeshObj)
-        self.calculateFaceWeights(bmeshObj)
         self.calculatePatchEigenValues(bmeshObj)
-        self.samplePatchNormals(bmeshObj)
+        #self.samplePatchNormals(bmeshObj)
 
     def calculateTotalArea(self, bmeshObj):
         """
@@ -91,7 +90,7 @@ class Patch:
         self.barycenter /= len(verticesSet)
 
     def calculateFaceWeights(self, bmeshObj):
-        self.faceWeights = {}
+        faceWeights = {}
 
         #Computing some constant values for tensor voting
         maxFaceSize = 0.0
@@ -110,10 +109,13 @@ class Patch:
         sigma = max(facesDists.values()) / 3.0
 
         for faceIdx in self.getFacesIdxIterator():
-            self.faceWeights[faceIdx] = (bmeshObj.faces[faceIdx].calc_area() / maxFaceSize) * math.exp(-facesDists[faceIdx]/sigma)
+            faceWeights[faceIdx] = (bmeshObj.faces[faceIdx].calc_area() / maxFaceSize) * math.exp(-facesDists[faceIdx]/sigma)
+
+        return faceWeights
 
     def calculatePatchEigenValues(self, bmeshObj):
         #Extracting the eigenvalues from the patch's normals' correlation matrix. Used to compare patches between each other
+        faceWeights = self.calculateFaceWeights(bmeshObj)
         normalsCovMat = np.zeros((3,3))
 
         #Normal tensor voting
@@ -121,7 +123,7 @@ class Patch:
             normalVec = bmeshObj.faces[faceIdx].normal
             normalVec = normalVec / np.linalg.norm(normalVec)
             faceNormal = np.matrix(np.array(normalVec)).T #Transforming the face normal into a vector
-            normalsCovMat += (faceNormal @ faceNormal.T) * self.faceWeights[faceIdx]
+            normalsCovMat += (faceNormal @ faceNormal.T) * faceWeights[faceIdx]
 
         #Extracting the orthogonal directions from the tensor
         #The signs of the eigenvectors are unreliable here and will be corrected
@@ -132,7 +134,7 @@ class Patch:
         h2 = 0.0
         for faceIdx in self.getFacesIdxIterator():
             face = bmeshObj.faces[faceIdx]
-            h2 += self.faceWeights[faceIdx] * np.dot(face.normal, self.eigenVecs[:,2])
+            h2 += np.dot(face.normal, self.eigenVecs[:,2]) * faceWeights[faceIdx]
 
         self.eigenVecs[:,2] = self.eigenVecs[:,2] * np.sign(h2)
 
@@ -147,9 +149,9 @@ class Patch:
             faceProj = faceCenterVec - self.eigenVecs[:,2] * dot_zProj
             
             #w1 = math.exp(-(np.linalg.norm(faceCenterVec)**2.0)/(3.0 * maxDist))
-            #w2 = dot_zProj**2.0
+            w2 = dot_zProj**2.0
             w3 = bmeshObj.faces[faceIdx].calc_area()
-            xAxis += w3 * (faceProj - centerPos)
+            xAxis += w2 * w3 * (faceProj - centerPos)
 
         #Finally get the y-axis from the other two corrected vectors and normalizing them
         self.eigenVecs[:,1] = -np.cross(xAxis, self.eigenVecs[:,2])
@@ -397,7 +399,7 @@ class Patch:
             dir = self.eigenVecs[:,i]
             debugDrawing.draw_line(gpencil, gp_frame, (patchCentralPos, patchCentralPos + lineSize * dir), (startThck, endThck), axisColors[i])
 
-    def drawNormalSamplePlane(self, gpencil, gp_frame, bmeshObj, color = "800080"):
+    def drawNormalSamplePlane(self, gpencil, gp_frame, bmeshObj, frameThck = 0.5, sampleThck = 2.0, color = "800080"):
         """
         Draws in a grease pencil canvas the plane used to sample the normals 
         """
@@ -420,12 +422,12 @@ class Patch:
         for i in range(4):
             p0 = planeOrigin + 0.5 * planeScale * points[i]
             p1 = planeOrigin + 0.5 * planeScale * points[(i+1)%4]
-            debugDrawing.draw_line(gpencil, gp_frame, (p0, p1), (0.5, 0.5), color)
+            debugDrawing.draw_line(gpencil, gp_frame, (p0, p1), (frameThck, frameThck), color)
 
         #Sampling
         for y in range(Patch.sampleRes):
             for x in range(Patch.sampleRes):
                 sampleCoords = planeOrigin + scaleFac * (v1 * (x - centerFac) + v2 * (y - centerFac))
-                debugDrawing.draw_line(gpencil, gp_frame, (sampleCoords, sampleCoords), (2.0, 2.0), color)
+                debugDrawing.draw_line(gpencil, gp_frame, (sampleCoords, sampleCoords), (sampleThck, sampleThck), color)
 
     

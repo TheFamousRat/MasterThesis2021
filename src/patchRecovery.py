@@ -217,72 +217,58 @@ if len(meshPatches) == 0:
         pickle.dump(meshPatches, f)
     print("Done")
 
-#Loading sampled textures
-texturesInfos = []
-Patch.Patch.setupBakingEnvironment(bm)
-patchesTextureFilePath = os.path.join(meshDataPath, 'textures.pkl')
+if False:
+    #Loading sampled textures
+    texturesInfos = []
+    Patch.Patch.setupBakingEnvironment(bm)
+    patchesTextureFilePath = os.path.join(meshDataPath, 'textures.pkl')
 
-#Trying to load baked data (if it exists)
-if os.path.exists(patchesTextureFilePath):
-    print("Baked textures file found in {}. Loading...".format(patchesTextureFilePath))
-    with lzma.open(patchesTextureFilePath, 'rb') as f:
-        texturesInfos = pickle.load(f) 
-    
-    (meshPatches[0]).bakePatchTexture(bm)
-    patchRef = (meshPatches[0]).pixels
-    patchBaked = texturesInfos[0]
-    
-    print("Checking integrity...")
-    if pickle.dumps(patchRef) != pickle.dumps(patchBaked):
-        print("Outdaded or invalid baked textures found, rebaking all textures")
-        texturesInfos = []
-    else:
-        print("Patch integrity test successful")
+    #Trying to load baked data (if it exists)
+    if os.path.exists(patchesTextureFilePath):
+        print("Baked textures file found in {}. Loading...".format(patchesTextureFilePath))
+        with lzma.open(patchesTextureFilePath, 'rb') as f:
+            texturesInfos = pickle.load(f) 
+        
+        (meshPatches[0]).bakePatchTexture(bm)
+        patchRef = (meshPatches[0]).pixels
+        patchBaked = texturesInfos[0]
+        
+        print("Checking integrity...")
+        if pickle.dumps(patchRef) != pickle.dumps(patchBaked):
+            print("Outdaded or invalid baked textures found, rebaking all textures")
+            texturesInfos = []
+        else:
+            print("Patch integrity test successful")
 
-if len(texturesInfos) == 0:#Add here logic for checking whether the texture info of patches is correct
-    print("Setting up baking environment...")
+    if len(texturesInfos) == 0:#Add here logic for checking whether the texture info of patches is correct
+        print("Setting up baking environment...")
 
-    print("Baking patch textures...")
+        print("Baking patch textures...")
 
-    bar = Bar('Extracting patch textures', max=len(meshPatches))
+        bar = Bar('Extracting patch textures', max=len(meshPatches))
+        for i in range(len(meshPatches)):
+            patch = meshPatches[i]
+            patch.bakePatchTexture(bm)
+            bar.next()
+            
+        texturesInfos = [meshPatches[i].pixels for i in range(len(meshPatches))]
+        
+        print("Dumping into a binary file...")
+        with lzma.open(patchesTextureFilePath, 'wb') as f:
+            pickle.dump(texturesInfos, f)
+        print("Done")
+
+    print("Setting texture data...")
     for i in range(len(meshPatches)):
         patch = meshPatches[i]
-        patch.bakePatchTexture(bm)
-        bar.next()
-        
-    texturesInfos = [meshPatches[i].pixels for i in range(len(meshPatches))]
-    
-    print("Dumping into a binary file...")
-    with lzma.open(patchesTextureFilePath, 'wb') as f:
-        pickle.dump(texturesInfos, f)
+        patch.pixels = texturesInfos[i]
     print("Done")
-
-print("Setting texture data...")
-for i in range(len(meshPatches)):
-    patch = meshPatches[i]
-    patch.pixels = texturesInfos[i]
-print("Done")
 
 #Rest of the logic
 print("===LOGIC START===")
-
-
-
-
-patch = meshPatches[1291]
-img = bpy.data.images['bakedImage']
-imgPixels = list(img.pixels[:])
-for i in range(Patch.Patch.bakedImgSize**2):
-    for x in range(3):
-        imgPixels[(i*4)+x] = patch.pixels[(i*4)+x]
-        
-img.pixels = imgPixels
-
-
-
 print("Drawing the patches' eigenvectors")
 for patch in meshPatches:
-    patch.drawLRF(gpencil, gp_frame, bm)
+    patch.drawLRF(gpencil, gp_frame, bm, 0.02, 1.0, 10.0)
 
 ##Building a KD-tree to find the k nearest neighbours of any point
 def getPatchNormalColumnVector(patch):
