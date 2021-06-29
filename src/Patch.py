@@ -112,9 +112,6 @@ class Patch:
         for faceIdx in self.getFacesIdxIterator():
             self.faceWeights[faceIdx] = (bmeshObj.faces[faceIdx].calc_area() / maxFaceSize) * math.exp(-facesDists[faceIdx]/sigma)
 
-    def getLRF_YAxis(self, xAxis, zAxis):
-        return -np.cross(xAxis, zAxis)
-
     def calculatePatchEigenValues(self, bmeshObj):
         #Extracting the eigenvalues from the patch's normals' correlation matrix. Used to compare patches between each other
         normalsCovMat = np.zeros((3,3))
@@ -138,10 +135,27 @@ class Patch:
             h2 += self.faceWeights[faceIdx] * np.dot(face.normal, self.eigenVecs[:,2])
 
         self.eigenVecs[:,2] = self.eigenVecs[:,2] * np.sign(h2)
-        #Correcting the x-axis
 
-        #Finally get the y-axis with the other two corrected vectors
-        self.eigenVecs[:,1] = self.getLRF_YAxis(self.eigenVecs[:,0], self.eigenVecs[:,2])
+        #Correcting the x-axis
+        centerPos = np.array(bmeshObj.verts[self.centerVertexIdx].co)
+        xAxis = np.array([0.0, 0.0, 0.0])
+        for faceIdx in self.getFacesIdxIterator():
+            facePos = self.getFaceBarycenter(bmeshObj.faces[faceIdx])
+            faceCenterVec = facePos - centerPos
+            dot_zProj = np.dot(self.eigenVecs[:,2], faceCenterVec)
+            
+            faceProj = faceCenterVec - self.eigenVecs[:,2] * dot_zProj
+            
+            #w1 = math.exp(-(np.linalg.norm(faceCenterVec)**2.0)/(3.0 * maxDist))
+            #w2 = dot_zProj**2.0
+            w3 = bmeshObj.faces[faceIdx].calc_area()
+            xAxis += w3 * (faceProj - centerPos)
+
+        #Finally get the y-axis from the other two corrected vectors and normalizing them
+        self.eigenVecs[:,1] = -np.cross(xAxis, self.eigenVecs[:,2])
+        self.eigenVecs[:,1] = self.eigenVecs[:,1] / np.linalg.norm(self.eigenVecs[:,1])
+        self.eigenVecs[:,0] = np.cross(self.eigenVecs[:,1], self.eigenVecs[:,2])
+        self.eigenVecs[:,0] = self.eigenVecs[:,0] / np.linalg.norm(self.eigenVecs[:,0])
 
         self.rotMatInv = np.linalg.inv(self.eigenVecs)
     
@@ -280,8 +294,8 @@ class Patch:
         #UV unwrapping using ABF (Angle Based Flattening)
         bpy.ops.uv.unwrap(method = "ANGLE_BASED")
 
-        for faceIdx in self.getFacesIdxIterator():
-            bmeshObj.faces[faceIdx].select = False
+        #for faceIdx in self.getFacesIdxIterator():
+        #    bmeshObj.faces[faceIdx].select = False
 
         #Center the UVs (so that the central vertex is at pos (0.5,0.5)
         uvMapCenter = np.array([0.5, 0.5])
@@ -303,8 +317,8 @@ class Patch:
         projCoords = np.array([np.dot(vertRelPos, self.eigenVecs[:,0]), np.dot(vertRelPos, self.eigenVecs[:,1])])
 
         #Angle between the projection and the x-axis (in the world plane)
-        angleWorld = -math.atan2(projCoords[1], projCoords[0])
-        
+        angleWorld = math.atan2(projCoords[1], projCoords[0])
+
         #xAxis in the UV map
         refVecUV = np.matrix(self.getVertUV(bmeshObj, refVertIdx, Patch.uvLayerName)).T
         centerVec = np.matrix(uvMapCenter).T
