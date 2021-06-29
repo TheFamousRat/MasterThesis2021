@@ -112,6 +112,9 @@ class Patch:
         for faceIdx in self.getFacesIdxIterator():
             self.faceWeights[faceIdx] = (bmeshObj.faces[faceIdx].calc_area() / maxFaceSize) * math.exp(-facesDists[faceIdx]/sigma)
 
+    def getLRF_YAxis(self, xAxis, zAxis):
+        return -np.cross(xAxis, zAxis)
+
     def calculatePatchEigenValues(self, bmeshObj):
         #Extracting the eigenvalues from the patch's normals' correlation matrix. Used to compare patches between each other
         normalsCovMat = np.zeros((3,3))
@@ -138,7 +141,7 @@ class Patch:
         #Correcting the x-axis
 
         #Finally get the y-axis with the other two corrected vectors
-        self.eigenVecs[:,1] = -np.cross(self.eigenVecs[:,0], self.eigenVecs[:,2])
+        self.eigenVecs[:,1] = self.getLRF_YAxis(self.eigenVecs[:,0], self.eigenVecs[:,2])
 
         self.rotMatInv = np.linalg.inv(self.eigenVecs)
     

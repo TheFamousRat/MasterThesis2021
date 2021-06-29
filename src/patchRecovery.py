@@ -265,6 +265,53 @@ print("Done")
 
 #Rest of the logic
 print("===LOGIC START===")
+
+
+
+
+
+bar = Bar('Correcting the axis', max=len(meshPatches))
+for patch in meshPatches:
+    ##Estimating the x-axis
+    #Constants for the process
+    centerPos = np.array(bm.verts[patch.centerVertexIdx].co)
+    maxDist = 0.0
+    zAxis = np.copy(patch.eigenVecs[:,2])
+    for faceIdx in patch.getFacesIdxIterator():
+        facePos = patch.getFaceBarycenter(bm.faces[faceIdx])
+        maxDist = max(maxDist, np.linalg.norm(centerPos - facePos))
+    
+    #Estimation
+    xAxis = np.array([0.0, 0.0, 0.0])
+    for faceIdx in patch.getFacesIdxIterator():
+        facePos = patch.getFaceBarycenter(bm.faces[faceIdx])
+        faceCenterVec = facePos - centerPos
+        dot_zProj = np.dot(zAxis, faceCenterVec)
+        
+        faceProj = faceCenterVec - zAxis * dot_zProj
+        
+        #w1 = math.exp(-(np.linalg.norm(faceCenterVec)**2.0)/(3.0 * maxDist))
+        #w2 = dot_zProj**2.0
+        w3 = bm.faces[faceIdx].calc_area()
+        xAxis += w3 * (faceProj - centerPos)
+        
+    patch.eigenVecs[:,0] = xAxis / np.linalg.norm(xAxis)
+    ##Estimating the y-axis
+    patch.eigenVecs[:,1] = -np.cross(patch.eigenVecs[:,0], patch.eigenVecs[:,2])
+    patch.eigenVecs[:,1] = patch.eigenVecs[:,1] / np.linalg.norm(patch.eigenVecs[:,1])
+    patch.eigenVecs[:,0] = np.cross(patch.eigenVecs[:,1], patch.eigenVecs[:,2])
+    patch.eigenVecs[:,0] = patch.eigenVecs[:,0] / np.linalg.norm(patch.eigenVecs[:,0])
+    bar.next()
+
+
+
+
+
+
+
+
+
+
 print("Drawing the patches' eigenvectors")
 for patch in meshPatches:
     patch.drawLRF(gpencil, gp_frame, bm)
@@ -285,4 +332,3 @@ patchMatrix = np.zeros((3 * Patch.Patch.sampleRes**2, clusterSize))
 for i in range(clusterSize):
     patch = meshPatches[neighIdx[i]]
     patchMatrix[:,i] = getPatchNormalColumnVector(patch)
-
