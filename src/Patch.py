@@ -67,7 +67,7 @@ class Patch:
         self.calculateTotalArea(bmeshObj)
         self.calculateBarycenter(bmeshObj)
         self.calculatePatchEigenValues(bmeshObj)
-        #self.samplePatchNormals(bmeshObj)
+        self.samplePatchNormals(bmeshObj)
 
     def calculateTotalArea(self, bmeshObj):
         """
@@ -142,23 +142,24 @@ class Patch:
         centerPos = np.array(bmeshObj.verts[self.centerVertexIdx].co)
         xAxis = np.array([0.0, 0.0, 0.0])
         for faceIdx in self.getFacesIdxIterator():
+            face = bmeshObj.faces[faceIdx]
             facePos = self.getFaceBarycenter(bmeshObj.faces[faceIdx])
             faceCenterVec = facePos - centerPos
             dot_zProj = np.dot(self.eigenVecs[:,2], faceCenterVec)
             
-            faceProj = faceCenterVec - self.eigenVecs[:,2] * dot_zProj
+            faceProjRel = faceCenterVec - self.eigenVecs[:,2] * dot_zProj
             
-            #w1 = math.exp(-(np.linalg.norm(faceCenterVec)**2.0)/(3.0 * maxDist))
-            w2 = dot_zProj**2.0
-            w3 = bmeshObj.faces[faceIdx].calc_area()
-            xAxis += w2 * w3 * (faceProj - centerPos)
+            #w1 = math.exp(-(np.linalg.norm(faceCenterVec)**2.0)*3.0)
+            w2 = dot_zProj**(2.0)
+            #w3 = bmeshObj.faces[faceIdx].calc_area()
+            xAxis += w2 * faceWeights[faceIdx] * (faceProjRel)
 
         #Finally get the y-axis from the other two corrected vectors and normalizing them
-        self.eigenVecs[:,1] = -np.cross(xAxis, self.eigenVecs[:,2])
-        self.eigenVecs[:,1] = self.eigenVecs[:,1] / np.linalg.norm(self.eigenVecs[:,1])
-        self.eigenVecs[:,0] = np.cross(self.eigenVecs[:,1], self.eigenVecs[:,2])
+        self.eigenVecs[:,0] = xAxis#np.cross(self.eigenVecs[:,1], self.eigenVecs[:,2])
         self.eigenVecs[:,0] = self.eigenVecs[:,0] / np.linalg.norm(self.eigenVecs[:,0])
-
+        self.eigenVecs[:,1] = -np.cross(self.eigenVecs[:,0], self.eigenVecs[:,2])
+        self.eigenVecs[:,1] = self.eigenVecs[:,1] / np.linalg.norm(self.eigenVecs[:,1])
+        
         self.rotMatInv = np.linalg.inv(self.eigenVecs)
     
     def getFacesIdxIterator(self):
@@ -390,14 +391,15 @@ class Patch:
                 self.sampledNormals[x + y * Patch.sampleRes] = self.rotMatInv @ np.array(bmeshObj.faces[faceIdx].normal)
     
     defaultAxisColors = ["ff0000", "00ff00", "0000ff"]
-    def drawLRF(self, gpencil, gp_frame, bmeshObj, lineSize = 0.02, startThck = 0.5, endThck = 3.0, axisColors = defaultAxisColors):
+    def drawLRF(self, gpencil, gp_frame, bmeshObj, lineSize = 0.02, startThck = 0.5, endThck = 3.0, drawAxis = (True, True, True), axisColors = defaultAxisColors):
         """
         Draws in a grease pencil canvas the eigenvectors associated to this patch's normal tensor
         """
         patchCentralPos = self.getCentralPos(bmeshObj)
         for i in range(3):
-            dir = self.eigenVecs[:,i]
-            debugDrawing.draw_line(gpencil, gp_frame, (patchCentralPos, patchCentralPos + lineSize * dir), (startThck, endThck), axisColors[i])
+            if drawAxis[i]:
+                dir = self.eigenVecs[:,i]
+                debugDrawing.draw_line(gpencil, gp_frame, (patchCentralPos, patchCentralPos + lineSize * dir), (startThck, endThck), axisColors[i])
 
     def drawNormalSamplePlane(self, gpencil, gp_frame, bmeshObj, frameThck = 0.5, sampleThck = 2.0, color = "800080"):
         """
