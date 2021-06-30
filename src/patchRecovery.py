@@ -285,3 +285,10 @@ patchMatrix = np.zeros((3 * Patch.Patch.sampleRes**2, clusterSize))
 for i in range(clusterSize):
     patch = meshPatches[neighIdx[i]]
     patchMatrix[:,i] = getPatchNormalColumnVector(patch)
+
+denoisedNormals = np.copy(patchMatrix)
+
+from sklearn.metrics.pairwise import pairwise_kernels
+
+kernelMatrix = pairwise_kernels(denoisedNormals.T, metric = 'poly', degree = 2, gamma = 1, coef0 = 1)
+u, s, vh = np.linalg.svd(kernelMatrix)
