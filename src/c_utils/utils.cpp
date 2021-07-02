@@ -25,19 +25,22 @@ void _getDepressedCubicRoots(float c, float d, float* arr) {
     else if (h <= 0) {
         float i = std::sqrt((std::pow(d, 2.0) / 4.0) - h); 
         float j = std::cbrt(i);                    
-        float k = std::acos(-(d / (2.0f * i)));           
+        float k = std::acos(-(d / (2.0f * i)));       
+        float kDiv = k / 3.0f;    
         float L = -j;                              
-        float M = std::cos(k / 3.0f);                   
-        float N = SQRT_3 * std::sin(k / 3.0f);                 
+        float M = std::cos(kDiv);                   
+        float N = SQRT_3 * std::sin(kDiv);                 
 
-        arr[0] = 2.0f * j * std::cos(k / 3.0f);
+        arr[0] = 2.0f * j * std::cos(kDiv);
         arr[1] = L * (M + N); 
         arr[2] = L * (M - N); 
     }
     else if (h > 0.0f) {
-        float R = -(d / 2.0f) + std::sqrt(h);
+        float dDiv = d / 2.0f;
+        float hSqrt = std::sqrt(h);
+        float R = -dDiv + hSqrt;
         float S = std::cbrt(R);          
-        float T = -(d / 2.0f) - std::sqrt(h);
+        float T = -dDiv - hSqrt;
         float U = std::cbrt(T);                   
 
         arr[0] = (S + U);

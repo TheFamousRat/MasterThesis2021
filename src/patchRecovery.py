@@ -15,6 +15,8 @@ import bpy
 import bmesh
 #Hashing utilies for mesh unique identification
 import hashlib
+#C communication
+import ctypes
 #Scikit suite
 import numpy as np
 from scipy.spatial.distance import cdist
@@ -270,6 +272,10 @@ for patch in meshPatches:
     patch.drawLRF(gpencil, gp_frame, bm, 0.03, 2.0, 15.0, drawAxis = (True, True, True))
 
 ##Low rank recovery
+from sklearn.metrics.pairwise import pairwise_kernels
+testlib = ctypes.CDLL('/home/home/thefamousrat/Documents/KU Leuven/Master Thesis/MasterThesis2021/src/c_utils/libutils.so')
+testlib.getDepressedCubicRoots.argtypes = (ctypes.c_float, ctypes.c_float, ctypes.POINTER(ctypes.c_float))
+
 #Building a KD-tree to find the k nearest neighbours of any point
 def getPatchNormalColumnVector(patch):
     return np.concatenate(np.array([patch.sampledNormals[i] for i in range(Patch.Patch.sampleRes**2)]), axis = 0)
@@ -290,7 +296,30 @@ for i in range(clusterSize):
 #Solving low-rank problem
 denoisedNormals = np.copy(patchMatrix)
 
-from sklearn.metrics.pairwise import pairwise_kernels
-
 kernelMatrix = pairwise_kernels(denoisedNormals.T, metric = 'poly', degree = 1, gamma = 1, coef0 = 1)
-u, s, vh = np.linalg.svd(kernelMatrix)
+u, singVals, vh = np.linalg.svd(kernelMatrix)
+
+#Optimizing C (closed-form solution)
+arr = (ctypes.c_float*3)()
+tau = 1.0
+rho = 20.0
+q = tau / (2.0 * rho)
+
+phiVals = np.zeros(clusterSize)
+roots = np.zeros(4)
+for i in range(clusterSize):
+    singVal = singVals[i]
+    p = -singVal
+    testlib.getDepressedCubicRoots(p, q, arr)
+    for j in range(3):
+        roots[j] = arr[j]
+    
+    roots[roots < 0.0] = 0.0
+    roots_ = np.unique(roots)
+    
+    phiVals[i] = roots_[np.argmin([((rho/2.0)*(singVal - root**2.0)**2.0) + (tau * root) for root in roots_])]
+    
+C = np.diag(phiVals) @ vh
+
+from scipy.optimize import minimize
+#Optimizing recovered normals (BCD)

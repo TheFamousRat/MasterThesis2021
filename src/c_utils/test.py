@@ -7,15 +7,14 @@ testlib.getDepressedCubicRoots.argtypes = (ctypes.c_float, ctypes.c_float, ctype
 
 arr = (ctypes.c_float*3)()
 
-p = -100
-q = 57
+p = -539.3279613200449
+q = 0.5
 
 start = time.time()
 
-for i in range(10000):
-    testlib.getDepressedCubicRoots(-i, q, arr)
-    print("Roots : ", [x for x in arr])
-    print([x**3 + i * x + q for x in arr])
+testlib.getDepressedCubicRoots(p, q, arr)
+print("Roots : ", [x for x in arr])
+print([x**3 + p * x + q for x in arr])
 
 end = time.time()
 
