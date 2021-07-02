@@ -9,8 +9,12 @@
 
 #define EPSILON 0.0000001
 #define INF std::numeric_limits<float>::infinity()
+#define INV_3 0.33333333333
+#define SQRT_3 1.73205080757
 
 typedef Eigen::Vector3f Vector3f;
+
+void _getDepressedCubicRoots(float c, float d, float* arr);
 
 /*
  * Checks if a ray intersects a triangle (and if yes, returns it)

@@ -1,11 +1,49 @@
 
 #include "utils.h"
-
+//g++ -fPIC -shared -o libutils.so utils.cpp
 extern "C" {
     int getClosestFaceFromRay(double* facePointsArr, unsigned int faceCount, double* rayOrig_, double* rayDir_)
     {
         return _getClosestFaceFromRay(facePointsArr, faceCount, rayOrig_, rayDir_);
     }
+
+    void getDepressedCubicRoots(float p, float q, float* arr) {
+        _getDepressedCubicRoots(p, q, arr);
+    }
+}
+
+void _getDepressedCubicRoots(float c, float d, float* arr) {
+    float h = (std::pow(d, 2.0f) / 4.0f + std::pow(c, 3.0f) / 27.0f);
+
+    if (c == 0.0f && d == 0.0f && h == 0.0f) {
+        float x = -std::cbrt(d);
+
+        arr[0] = x;  
+        arr[1] = x;  
+        arr[2] = x;            
+    }
+    else if (h <= 0) {
+        float i = std::sqrt((std::pow(d, 2.0) / 4.0) - h); 
+        float j = std::cbrt(i);                    
+        float k = std::acos(-(d / (2.0f * i)));           
+        float L = -j;                              
+        float M = std::cos(k / 3.0f);                   
+        float N = SQRT_3 * std::sin(k / 3.0f);                 
+
+        arr[0] = 2.0f * j * std::cos(k / 3.0f);
+        arr[1] = L * (M + N); 
+        arr[2] = L * (M - N); 
+    }
+    else if (h > 0.0f) {
+        float R = -(d / 2.0f) + std::sqrt(h);
+        float S = std::cbrt(R);          
+        float T = -(d / 2.0f) - std::sqrt(h);
+        float U = std::cbrt(T);                   
+
+        arr[0] = (S + U);
+        arr[1] = arr[0];
+        arr[2] = arr[0];
+    }                                                  
 }
 
 bool RayIntersectsTriangle(Vector3f vTri[3],

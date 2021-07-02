@@ -269,7 +269,8 @@ print("Drawing the patches' eigenvectors")
 for patch in meshPatches:
     patch.drawLRF(gpencil, gp_frame, bm, 0.03, 2.0, 15.0, drawAxis = (True, True, True))
 
-##Building a KD-tree to find the k nearest neighbours of any point
+##Low rank recovery
+#Building a KD-tree to find the k nearest neighbours of any point
 def getPatchNormalColumnVector(patch):
     return np.concatenate(np.array([patch.sampledNormals[i] for i in range(Patch.Patch.sampleRes**2)]), axis = 0)
 
@@ -286,9 +287,10 @@ for i in range(clusterSize):
     patch = meshPatches[neighIdx[i]]
     patchMatrix[:,i] = getPatchNormalColumnVector(patch)
 
+#Solving low-rank problem
 denoisedNormals = np.copy(patchMatrix)
 
 from sklearn.metrics.pairwise import pairwise_kernels
 
-kernelMatrix = pairwise_kernels(denoisedNormals.T, metric = 'poly', degree = 2, gamma = 1, coef0 = 1)
+kernelMatrix = pairwise_kernels(denoisedNormals.T, metric = 'poly', degree = 1, gamma = 1, coef0 = 1)
 u, s, vh = np.linalg.svd(kernelMatrix)
