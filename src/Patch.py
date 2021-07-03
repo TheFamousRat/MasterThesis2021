@@ -18,7 +18,7 @@ class Patch:
     #Related to texture baking
     uvLayerName = "tempProj"
     bakedImgName = "bakedImage"
-    bakedImgSize = 16
+    bakedImgSize = 64
     imageNodeName = "BakedTextureNode"
     uvLayerNodeName = "BakedUVLayerNode"
     uvExclusionPoint = np.array([2.0, 2.0]) #Location where the UV not to be used are isolated
@@ -246,7 +246,7 @@ class Patch:
 
         #Creating an image to bake to
         if not Patch.bakedImgName in bpy.data.images:
-            bpy.data.images.new(Patch.bakedImgName, Patch.bakedImgSize, Patch.bakedImgSize)
+            bpy.data.images.new(Patch.bakedImgName, Patch.bakedImgSize, Patch.bakedImgSize, alpha = True)
         bpy.data.images[Patch.bakedImgName].source = 'GENERATED'
         bpy.data.images[Patch.bakedImgName].scale(Patch.bakedImgSize, Patch.bakedImgSize)
             
@@ -339,10 +339,10 @@ class Patch:
             self.setVertUV(bmeshObj, vIdx, Patch.uvLayerName, (rotMat @ (vertUVCoords - centerVec)) + centerVec)
         
         #Bake
-        bpy.ops.object.bake(type='DIFFUSE', pass_filter = {'COLOR'}, use_clear = True, margin = Patch.textureMargin)
+        bpy.ops.object.bake(type='DIFFUSE', pass_filter = {'COLOR'}, use_clear = True, margin = Patch.textureMargin)#
 
         #Save image
-        self.pixels = bpy.data.images[Patch.bakedImgName].pixels[:]
+        self.pixels = np.array(bpy.data.images[Patch.bakedImgName].pixels[:])
 
         #Remove UVs from sight
         for vertIdx in self.verticesIdxList:

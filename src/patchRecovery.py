@@ -200,20 +200,6 @@ if len(meshPatches) == 0:
     end = time.time()
     print("Time taken : {} seconds".format(end - start))
     
-    #Launching a procedure to correct the orientation of the patches' eigenvectors
-    #refPatchChain = createPatchCorrectionChain(0)
-        
-    print("Starting to correct the patches' signs...")
-
-    start = time.time()
-
-    #for couple in refPatchChain:
-    #    patchesAxisSignMatching(meshPatches[couple[0]], meshPatches[couple[1]], bm)
-
-    end = time.time()
-    print("Time taken : {} seconds".format(end - start))
-    
-    
     print("Dumping into a binary file...")
     with lzma.open(patchesDataPath, 'wb') as f:
         pickle.dump(meshPatches, f)
@@ -230,9 +216,10 @@ if os.path.exists(patchesTextureFilePath):
     with lzma.open(patchesTextureFilePath, 'rb') as f:
         texturesInfos = pickle.load(f) 
     
-    (meshPatches[0]).bakePatchTexture(bm)
-    patchRef = (meshPatches[0]).pixels
-    patchBaked = texturesInfos[0]
+    patchRefIdx = 5731
+    (meshPatches[patchRefIdx]).bakePatchTexture(bm)
+    patchRef = (meshPatches[patchRefIdx]).pixels
+    patchBaked = texturesInfos[patchRefIdx]
     
     print("Checking integrity...")
     if pickle.dumps(patchRef) != pickle.dumps(patchBaked):
