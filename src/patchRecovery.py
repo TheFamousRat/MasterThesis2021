@@ -69,84 +69,6 @@ def intToSignedBitList(val, bitsAmount):
     """
     return [1-2*bool(val & (1<<j)) for j in range(bitsAmount)]
 
-def createPatchCorrectionChain(startingPatchIdx):
-    dataArr = np.array([patch.eigenVals / np.linalg.norm(patch.eigenVals) for patch in meshPatches])
-    correctedPatches = []
-    uncorrectedPatches = list(range(len(dataArr)))
-    refPatchPairs = []
-
-    start = time.time()
-
-    correctedPatches.append(startingPatchIdx)
-    uncorrectedPatches.remove(startingPatchIdx)
-    closestPoints, closestDists = pairwise_distances_argmin_min(dataArr[correctedPatches], dataArr[uncorrectedPatches])
-
-    bar = Bar('Building patch connectivity map', suffix='%(percent).1f%%', max=len(uncorrectedPatches) - 1)
-    while len(uncorrectedPatches) > 1:
-        ##Find the closest uncorrected patch and its ref patch
-        closestRelationId = np.argmin(closestDists)
-        refPatchIdx = correctedPatches[closestRelationId]
-        patchToCorrectIdx = closestPoints[closestRelationId]
-        refPatchPairs.append((refPatchIdx, patchToCorrectIdx))
-        uncorrectedPatches.remove(patchToCorrectIdx)
-        ##Creating a new row for the new patch, with empty data
-        closestPoints = np.append(closestPoints, -1)
-        closestDists = np.append(closestDists, 0.0)
-        correctedPatches.append(patchToCorrectIdx)
-        #print("Closest ref : {}, closest uncorrected patch : {} (remaining uncorrected patches : {})".format(refPatchIdx, patchToCorrectIdx, len(uncorrectedPatches)))
-        ##Finding nearest neighbours for the corrected points that used to have the new point as their nearest neighbour
-        #Locating the patches with refPatchIdx as their nearest neighbour
-        patchesObsNearstNeighbPos = np.where(closestPoints == patchToCorrectIdx)[0]
-        patchesObsNearstNeighbPos = np.append(patchesObsNearstNeighbPos, len(correctedPatches)-1)
-        patchesObsNearstNeighbIdx = np.array(correctedPatches)[patchesObsNearstNeighbPos]
-        #Finding new nearest neighbours of those patches, registering the relevant statistics
-        newPatchClosestPoints, newPatchClosestDists = pairwise_distances_argmin_min(dataArr[patchesObsNearstNeighbIdx], dataArr[uncorrectedPatches])
-        for i in range(len(patchesObsNearstNeighbPos)):
-            closestPoints[patchesObsNearstNeighbPos[i]] = uncorrectedPatches[newPatchClosestPoints[i]]
-            closestDists[patchesObsNearstNeighbPos[i]] = newPatchClosestDists[i]
-        bar.next()
-
-    refPatchPairs.append((correctedPatches[np.argmin(closestDists)], uncorrectedPatches[0]))
-
-    end = time.time()
-
-    print("Total time : ", end - start)
-    
-    return refPatchPairs
-
-def patchesAxisSignMatching(patchRef, patchToCorrect, bmeshObj):
-    vertices1Pos = patchRef.getVerticesPos(bmeshObj)
-    patch1RefPos = patchRef.getCentralPos(bmeshObj)
-    #Transforming the vertices position for patchRef
-    vertices1Pos = (patchRef.rotMatInv @ (vertices1Pos - patch1RefPos).T).T
-    
-    vertices2Pos = patchToCorrect.getVerticesPos(bmeshObj)
-    patch2RefPos = patchToCorrect.getCentralPos(bmeshObj)
-    #Centering the vertices of patch to correct
-    vertices2Pos = vertices2Pos - patch2RefPos
-    
-    matchingResults = []
-    for i in range(NUMBER_OF_SIGN_COMBINATION):
-        signsList = intToSignedBitList(i, COLUMNS_SIGN_MODIFIED) #Signs of the columns that we will switch
-        mat = np.copy(patchToCorrect.eigenVecs)
-        #Applying the sign changes
-        for colId in range(COLUMNS_SIGN_MODIFIED):
-            mat[:,colId] = signsList[colId] * mat[:,colId]
-        #Transforming the vertices
-        rotMatInv = np.linalg.inv(mat)
-        vertices2PosTransformed = (rotMatInv @ vertices2Pos.T).T
-        
-        #Measuring the difference between the transformed patches
-        closestPoints, closestDists = pairwise_distances_argmin_min(vertices2PosTransformed, vertices1Pos, metric = 'sqeuclidean')
-        matchingResults.append(closestDists.sum())
-    
-    bestCombinationIdx = 3#np.argmin(matchingResults)
-    signsList = intToSignedBitList(bestCombinationIdx, COLUMNS_SIGN_MODIFIED)
-    
-    for colId in range(COLUMNS_SIGN_MODIFIED):
-        patchToCorrect.eigenVecs[:,colId] = signsList[colId] * patchToCorrect.eigenVecs[:,colId]
-    patchToCorrect.rotMatInv = np.linalg.inv(patchToCorrect.eigenVecs)
-
 ###Body
 #Creating the bmesh
 selectedObj = bpy.context.active_object
@@ -206,51 +128,52 @@ if len(meshPatches) == 0:
     print("Done")
 
 #Loading sampled textures
-texturesInfos = []
-Patch.Patch.setupBakingEnvironment(bm)
-patchesTextureFilePath = os.path.join(meshDataPath, 'textures.pkl')
+if False:
+    texturesInfos = []
+    Patch.Patch.setupBakingEnvironment(bm)
+    patchesTextureFilePath = os.path.join(meshDataPath, 'textures.pkl')
 
-#Trying to load baked data (if it exists)
-if os.path.exists(patchesTextureFilePath):
-    print("Baked textures file found in {}. Loading...".format(patchesTextureFilePath))
-    with lzma.open(patchesTextureFilePath, 'rb') as f:
-        texturesInfos = pickle.load(f) 
-    
-    patchRefIdx = 5731
-    (meshPatches[patchRefIdx]).bakePatchTexture(bm)
-    patchRef = (meshPatches[patchRefIdx]).pixels
-    patchBaked = texturesInfos[patchRefIdx]
-    
-    print("Checking integrity...")
-    if pickle.dumps(patchRef) != pickle.dumps(patchBaked):
-        print("Outdaded or invalid baked textures found, rebaking all textures")
-        texturesInfos = []
-    else:
-        print("Patch integrity test successful")
+    #Trying to load baked data (if it exists)
+    if os.path.exists(patchesTextureFilePath):
+        print("Baked textures file found in {}. Loading...".format(patchesTextureFilePath))
+        with lzma.open(patchesTextureFilePath, 'rb') as f:
+            texturesInfos = pickle.load(f) 
+        
+        patchRefIdx = 5731
+        (meshPatches[patchRefIdx]).bakePatchTexture(bm)
+        patchRef = (meshPatches[patchRefIdx]).pixels
+        patchBaked = texturesInfos[patchRefIdx]
+        
+        print("Checking integrity...")
+        if pickle.dumps(patchRef) != pickle.dumps(patchBaked):
+            print("Outdaded or invalid baked textures found, rebaking all textures")
+            texturesInfos = []
+        else:
+            print("Patch integrity test successful")
 
-if len(texturesInfos) == 0:#Add here logic for checking whether the texture info of patches is correct
-    print("Setting up baking environment...")
+    if len(texturesInfos) == 0:#Add here logic for checking whether the texture info of patches is correct
+        print("Setting up baking environment...")
 
-    print("Baking patch textures...")
+        print("Baking patch textures...")
 
-    bar = Bar('Extracting patch textures', max=len(meshPatches))
+        bar = Bar('Extracting patch textures', max=len(meshPatches))
+        for i in range(len(meshPatches)):
+            patch = meshPatches[i]
+            patch.bakePatchTexture(bm)
+            bar.next()
+            
+        texturesInfos = [meshPatches[i].pixels for i in range(len(meshPatches))]
+        
+        print("Dumping into a binary file...")
+        with lzma.open(patchesTextureFilePath, 'wb') as f:
+            pickle.dump(texturesInfos, f)
+        print("Done")
+
+    print("Setting texture data...")
     for i in range(len(meshPatches)):
         patch = meshPatches[i]
-        patch.bakePatchTexture(bm)
-        bar.next()
-        
-    texturesInfos = [meshPatches[i].pixels for i in range(len(meshPatches))]
-    
-    print("Dumping into a binary file...")
-    with lzma.open(patchesTextureFilePath, 'wb') as f:
-        pickle.dump(texturesInfos, f)
+        patch.pixels = texturesInfos[i]
     print("Done")
-
-print("Setting texture data...")
-for i in range(len(meshPatches)):
-    patch = meshPatches[i]
-    patch.pixels = texturesInfos[i]
-print("Done")
 
 #Rest of the logic
 print("===LOGIC START===")
@@ -280,10 +203,22 @@ for i in range(clusterSize):
     patch = meshPatches[neighIdx[i]]
     patchMatrix[:,i] = getPatchNormalColumnVector(patch)
 
-#Solving low-rank problem
+##Setting ways to compute the matrices
+#Kernel params
+d = 1
+c = 0
+#Kernel matrix compute
+def getKernelMat(normalsApproxMat, c, d):
+    return pairwise_kernels(normalsApproxMat.T, metric = 'poly', degree = d, gamma = 1, coef0 = c)
+
+
+
+##Optimizing the matrices (step A and B from the paper)
+#Solving low-rank problem (one step starts here)
 denoisedNormals = np.copy(patchMatrix)
 
-kernelMatrix = pairwise_kernels(denoisedNormals.T, metric = 'poly', degree = 1, gamma = 1, coef0 = 1)
+
+kernelMatrix = getKernelMat(denoisedNormals, c, d)
 u, singVals, vh = np.linalg.svd(kernelMatrix)
 
 #Optimizing C (closed-form solution)
@@ -310,3 +245,6 @@ C = np.diag(phiVals) @ vh
 
 from scipy.optimize import minimize
 #Optimizing recovered normals (BCD)
+
+def cost():
+    pass
