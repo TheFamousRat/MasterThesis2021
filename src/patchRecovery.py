@@ -191,7 +191,7 @@ def getPatchNormalColumnVector(patch):
     return np.concatenate(np.array([patch.sampledNormals[i] for i in range(Patch.Patch.sampleRes**2)]), axis = 0)
 
 #Building the tree
-clusterSize = 10
+clusterSize = 40
 topoFeatures = [patch.eigenVals / np.linalg.norm(patch.eigenVals) for patch in meshPatches]
 kdt = KDTree(topoFeatures,  leaf_size = 30, metric = 'euclidean')
 
@@ -205,18 +205,44 @@ for i in range(clusterSize):
 
 ##Setting ways to compute the matrices
 #Kernel params
-d = 1
-c = 0
+d = 2.0
+c = 1.0
+invD = (d-1)/d
 #Kernel matrix compute
+#Note : the letter 'o' is here to indicate "all elements" (of the row or the column), not as the letter 
 def getKernelMat(normalsApproxMat, c, d):
     return pairwise_kernels(normalsApproxMat.T, metric = 'poly', degree = d, gamma = 1, coef0 = c)
 
+def getCost(a_oi, i, patchMatLowRank, patchMat, CtC, alpha):
+    #data = [patchMatLowRank[:,x] for x in range(clusterSize)]
+    #data[i] = a_oi
+    patchMatLowRank[:,i] = a_oi
+    K = pairwise_kernels([a_oi], patchMatLowRank.T, metric = 'poly', degree = d, gamma = 1, coef0 = c)[0]
+    
+    D = CtC[i,:] - K
+    
+    return (np.linalg.norm(a_oi - patchMat[:,i])**2) + (alpha/2.0)*(np.linalg.norm(D)**2)
 
+def getGrad(a_oi, i, patchMatLowRank, patchMat, CtC, alpha):
+    #data = [patchMatLowRank[:,x] for x in range(clusterSize)]
+    #data[i] = a_oi
+    patchMatLowRank[:,i] = a_oi
+    K = pairwise_kernels([a_oi], patchMatLowRank.T, metric = 'poly', degree = d, gamma = 1, coef0 = c)[0]
+    
+    D = CtC[i,:] - K
+    
+    P = np.power(K, invD)
+    P[i] = 2.0 * P[i]
+    
+    H = np.multiply(P, D)
+    
+    #patchMatLowRank[:,i] = a_oi
+    
+    return 2.0 * (a_oi - patchMat[:,i]) - alpha*d*(patchMatLowRank @ H)
 
 ##Optimizing the matrices (step A and B from the paper)
 #Solving low-rank problem (one step starts here)
 denoisedNormals = np.copy(patchMatrix)
-
 
 kernelMatrix = getKernelMat(denoisedNormals, c, d)
 u, singVals, vh = np.linalg.svd(kernelMatrix)
@@ -243,8 +269,19 @@ for i in range(clusterSize):
     
 C = np.diag(phiVals) @ vh
 
-from scipy.optimize import minimize
+from scipy.optimize import minimize, check_grad, approx_fprime
 #Optimizing recovered normals (BCD)
+CtC = C.T @ C
+alpha = 1.0
+i = 1
+x0 = np.copy(denoisedNormals[:,i])
+#print(check_grad(getCost, getGrad, denoisedNormals[:,i], i,  denoisedNormals, patchMatrix, CtC, alpha))
+#print(pairwise_kernels([denoisedNormals[:,i]], [denoisedNormals[:,x] for x in range(10)], metric = 'poly', degree = d, gamma = 1, coef0 = c))
 
-def cost():
-    pass
+res = minimize(getCost, x0, 
+        args = (i,  denoisedNormals, patchMatrix, CtC, alpha), 
+        jac = getGrad,
+        method = "L-BFGS-B")
+
+print(getCost(x0, i, denoisedNormals, patchMatrix, CtC, alpha))
+print(getCost(res.x, i, denoisedNormals, patchMatrix, CtC, alpha))
