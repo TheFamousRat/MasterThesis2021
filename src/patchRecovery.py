@@ -25,6 +25,8 @@ from scipy.optimize import linear_sum_assignment
 from sklearn.neighbors import KDTree
 #Show progress bar utility
 from progress.bar import Bar
+#
+from deepdiff import DeepDiff
 
 ##Local libraries (re-)loading
 #Loading user-defined modules (subject to frequent changes and needed reloading)
@@ -100,9 +102,11 @@ if os.path.exists(patchesDataPath):
     
     #Checking equality between two patches for the same mesh
     print("Checking integrity...")
-    patchRef = createVertexPatch(bm, bm.verts[0])
-    patchBaked = meshPatches[0]
-    if pickle.dumps(patchRef) != pickle.dumps(patchBaked):
+    patchIdx = 0
+    patchRef = createVertexPatch(bm, bm.verts[patchIdx])
+    patchBaked = meshPatches[patchIdx]
+    
+    if DeepDiff(patchRef, patchBaked) != {}:
         print("Outdaded or invalid baked patches found, rebuilding all patches")
         meshPatches = []
     else:
@@ -127,53 +131,53 @@ if len(meshPatches) == 0:
         pickle.dump(meshPatches, f)
     print("Done")
 
-#Loading sampled textures
-if False:
-    texturesInfos = []
-    Patch.Patch.setupBakingEnvironment(bm)
-    patchesTextureFilePath = os.path.join(meshDataPath, 'textures.pkl')
+#Loading sampled texturesz
+texturesInfos = []
+Patch.Patch.setupBakingEnvironment(bm)
+patchesTextureFilePath = os.path.join(meshDataPath, 'textures.pkl')
 
-    #Trying to load baked data (if it exists)
-    if os.path.exists(patchesTextureFilePath):
-        print("Baked textures file found in {}. Loading...".format(patchesTextureFilePath))
-        with lzma.open(patchesTextureFilePath, 'rb') as f:
-            texturesInfos = pickle.load(f) 
-        
-        patchRefIdx = 5731
-        (meshPatches[patchRefIdx]).bakePatchTexture(bm)
-        patchRef = (meshPatches[patchRefIdx]).pixels
-        patchBaked = texturesInfos[patchRefIdx]
-        
-        print("Checking integrity...")
-        if pickle.dumps(patchRef) != pickle.dumps(patchBaked):
-            print("Outdaded or invalid baked textures found, rebaking all textures")
-            texturesInfos = []
-        else:
-            print("Patch integrity test successful")
+#Trying to load baked data (if it exists)
+if os.path.exists(patchesTextureFilePath):
+    print("Baked textures file found in {}. Loading...".format(patchesTextureFilePath))
+    with lzma.open(patchesTextureFilePath, 'rb') as f:
+        texturesInfos = pickle.load(f) 
+    
+    print("Checking integrity...")
+    patchRefIdx = 0
+    (meshPatches[patchRefIdx]).bakePatchTexture(bm)
+    patchRef = np.array((meshPatches[patchRefIdx]).pixels)
+    patchBaked = np.array(texturesInfos[patchRefIdx])
+    
+    if DeepDiff(patchRef, patchBaked) != {}:
+        print("Outdaded or invalid baked textures found, rebaking all textures")
+        texturesInfos = []
+    else:
+        print("Patch integrity test successful")
 
-    if len(texturesInfos) == 0:#Add here logic for checking whether the texture info of patches is correct
-        print("Setting up baking environment...")
+if len(texturesInfos) == 0:#Add here logic for checking whether the texture info of patches is correct
+    print("Setting up baking environment...")
 
-        print("Baking patch textures...")
+    print("Baking patch textures...")
 
-        bar = Bar('Extracting patch textures', max=len(meshPatches))
-        for i in range(len(meshPatches)):
-            patch = meshPatches[i]
-            patch.bakePatchTexture(bm)
-            bar.next()
-            
-        texturesInfos = [meshPatches[i].pixels for i in range(len(meshPatches))]
-        
-        print("Dumping into a binary file...")
-        with lzma.open(patchesTextureFilePath, 'wb') as f:
-            pickle.dump(texturesInfos, f)
-        print("Done")
-
-    print("Setting texture data...")
+    bar = Bar('Extracting patch textures', max=len(meshPatches))
     for i in range(len(meshPatches)):
         patch = meshPatches[i]
-        patch.pixels = texturesInfos[i]
+        patch.bakePatchTexture(bm)
+        bar.next()
+        
+    texturesInfos = np.array([meshPatches[i].pixels for i in range(len(meshPatches))])
+    print(texturesInfos)
+    
+    print("Dumping into a binary file...")
+    with lzma.open(patchesTextureFilePath, 'wb') as f:
+        pickle.dump(texturesInfos, f)
     print("Done")
+
+print("Setting texture data...")
+for i in range(len(meshPatches)):
+    patch = meshPatches[i]
+    patch.pixels = texturesInfos[i]
+print("Done")
 
 #Rest of the logic
 print("===LOGIC START===")
@@ -191,12 +195,13 @@ def getPatchNormalColumnVector(patch):
     return np.concatenate(np.array([patch.sampledNormals[i] for i in range(Patch.Patch.sampleRes**2)]), axis = 0)
 
 #Building the tree
-clusterSize = 40
+clusterSize = 20
 topoFeatures = [patch.eigenVals / np.linalg.norm(patch.eigenVals) for patch in meshPatches]
 kdt = KDTree(topoFeatures,  leaf_size = 30, metric = 'euclidean')
 
 #Building the patch matrix for a patch
-dists, neighIdx = kdt.query([topoFeatures[0]], k=clusterSize)
+patchIdx = 3988
+dists, neighIdx = kdt.query([topoFeatures[patchIdx]], k=clusterSize)
 neighIdx = neighIdx[0]
 patchMatrix = np.zeros((3 * Patch.Patch.sampleRes**2, clusterSize))
 for i in range(clusterSize):
@@ -214,8 +219,6 @@ def getKernelMat(normalsApproxMat, c, d):
     return pairwise_kernels(normalsApproxMat.T, metric = 'poly', degree = d, gamma = 1, coef0 = c)
 
 def getCost(a_oi, i, patchMatLowRank, patchMat, CtC, alpha):
-    #data = [patchMatLowRank[:,x] for x in range(clusterSize)]
-    #data[i] = a_oi
     patchMatLowRank[:,i] = a_oi
     K = pairwise_kernels([a_oi], patchMatLowRank.T, metric = 'poly', degree = d, gamma = 1, coef0 = c)[0]
     
@@ -224,8 +227,6 @@ def getCost(a_oi, i, patchMatLowRank, patchMat, CtC, alpha):
     return (np.linalg.norm(a_oi - patchMat[:,i])**2) + (alpha/2.0)*(np.linalg.norm(D)**2)
 
 def getGrad(a_oi, i, patchMatLowRank, patchMat, CtC, alpha):
-    #data = [patchMatLowRank[:,x] for x in range(clusterSize)]
-    #data[i] = a_oi
     patchMatLowRank[:,i] = a_oi
     K = pairwise_kernels([a_oi], patchMatLowRank.T, metric = 'poly', degree = d, gamma = 1, coef0 = c)[0]
     
@@ -273,15 +274,16 @@ from scipy.optimize import minimize, check_grad, approx_fprime
 #Optimizing recovered normals (BCD)
 CtC = C.T @ C
 alpha = 1.0
-i = 1
-x0 = np.copy(denoisedNormals[:,i])
-#print(check_grad(getCost, getGrad, denoisedNormals[:,i], i,  denoisedNormals, patchMatrix, CtC, alpha))
-#print(pairwise_kernels([denoisedNormals[:,i]], [denoisedNormals[:,x] for x in range(10)], metric = 'poly', degree = d, gamma = 1, coef0 = c))
 
-res = minimize(getCost, x0, 
-        args = (i,  denoisedNormals, patchMatrix, CtC, alpha), 
-        jac = getGrad,
-        method = "L-BFGS-B")
+#Conducting BGD to optimize A
+for i in range(clusterSize):
+    #i = 1
+    x0 = denoisedNormals[:,i]
+    res = minimize(getCost, x0, 
+            args = (i,  denoisedNormals, patchMatrix, CtC, alpha), 
+            jac = getGrad,
+            method = "L-BFGS-B")
+    denoisedNormals[:,i] = np.copy(res.x)
 
-print(getCost(x0, i, denoisedNormals, patchMatrix, CtC, alpha))
-print(getCost(res.x, i, denoisedNormals, patchMatrix, CtC, alpha))
+#meshPatches[2225].bakePatchTexture(bm)
+bpy.data.images['bakedImage'].pixels = list(meshPatches[3045].pixels[:])

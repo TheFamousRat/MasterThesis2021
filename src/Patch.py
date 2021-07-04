@@ -56,7 +56,7 @@ class Patch:
                 self.verticesIdxList.add(vert.index)
         self.verticesIdxList = np.array(list(self.verticesIdxList))
 
-        self.pixels = []
+        self.pixels = np.array([])
 
         self.calculateIndicators(bmeshObj)
 
@@ -64,30 +64,22 @@ class Patch:
         """
         Syntaxic sugar to (re-)calculate the geometric descriptors of the patch
         """
-        self.calculateTotalArea(bmeshObj)
-        self.calculateBarycenter(bmeshObj)
+        self.calculateSurfaceStats(bmeshObj)
         self.calculatePatchEigenValues(bmeshObj)
         self.samplePatchNormals(bmeshObj)
 
-    def calculateTotalArea(self, bmeshObj):
+    def calculateSurfaceStats(self, bmeshObj):
         """
         Calculates the sum of areas of the triangles of the patch
         """
-        self.totalArea = 0.0
-        for faceIdx in self.getFacesIdxIterator():
-            self.totalArea += bmeshObj.faces[faceIdx].calc_area()
+        #Total area (sum of triangle areas)
+        self.totalArea = np.sum([bmeshObj.faces[faceIdx].calc_area() for faceIdx in self.getFacesIdxIterator()])
 
-    def calculateBarycenter(self, bmeshObj):
-        """
-        Calculates the barycenter of the patch by averaging local vertex positions
-        """
-        self.barycenter = np.array([0.0, 0.0, 0.0])
-        verticesSet = self.verticesIdxList
+        #Max edge length
+        self.maxEdgeLen = np.amax([bmeshObj.edges[edgeIdx].calc_length() for edgeIdx in self.getEdgesIdx(bmeshObj)])
 
-        for vertexIdx in verticesSet:
-            self.barycenter += np.array(bmeshObj.verts[vertexIdx].co)
-
-        self.barycenter /= len(verticesSet)
+        #Barycenter (unweighted average of vertices)
+        self.barycenter = np.average([np.array(bmeshObj.verts[vertexIdx].co) for vertexIdx in self.verticesIdxList], axis = 0) 
 
     def calculateFaceWeights(self, bmeshObj):
         faceWeights = {}
@@ -253,6 +245,12 @@ class Patch:
         #Preparing the shaders for baking if they aren't already
         for mat in selecObj.data.materials:
             nodeTree = mat.node_tree #shorthand
+            #Reloading the dependent images for faster baking (0 idea why this works, but it does)
+            for node in nodeTree.nodes:
+                if node.type == 'TEX_IMAGE':
+                    node.image.pack()
+                    node.image.unpack()
+                    node.image.pack()
             #Preparing the image node
             if not Patch.imageNodeName in mat.node_tree.nodes:
                 nodeTree.nodes.new("ShaderNodeTexImage").name = Patch.imageNodeName
@@ -286,6 +284,9 @@ class Patch:
             for loop in vert.link_loops:
                 loop[bmeshObj.loops.layers.uv[Patch.uvLayerName]].uv = Patch.uvExclusionPoint
 
+    def getFaceUVBarycenter(self, face, bmeshObj):
+        return np.average([self.getVertUV(bmeshObj, vert.index, Patch.uvLayerName) for vert in face.verts], axis = 0)
+
     def bakePatchTexture(self, bmeshObj):
         for face in bmeshObj.faces:
             face.select = False
@@ -301,8 +302,12 @@ class Patch:
         #    bmeshObj.faces[faceIdx].select = False
 
         #Center the UVs (so that the central vertex is at pos (0.5,0.5)
+        w = np.array([bmeshObj.faces[faceIdx].calc_area() for faceIdx in self.getFacesIdxIterator()])
+        facesUVBarycenters = [(self.getFaceUVBarycenter(bmeshObj.faces[faceIdx], bmeshObj)) for faceIdx in self.getFacesIdxIterator()]
+        unweightedBarycenter = np.average(facesUVBarycenters, axis = 0)
+        weightedBarycenterDeviation = np.average(facesUVBarycenters - unweightedBarycenter, axis = 0, weights = w)
         uvMapCenter = np.array([0.5, 0.5])
-        posShift = uvMapCenter - np.array(self.getVertUV(bmeshObj, self.centerVertexIdx, Patch.uvLayerName))
+        posShift = uvMapCenter - (unweightedBarycenter + weightedBarycenterDeviation)#np.array(self.getVertUV(bmeshObj, self.centerVertexIdx, Patch.uvLayerName))
         
         for vIdx in self.verticesIdxList:
             vertUVCoords = self.getVertUV(bmeshObj, vIdx, Patch.uvLayerName)
@@ -342,7 +347,7 @@ class Patch:
         bpy.ops.object.bake(type='DIFFUSE', pass_filter = {'COLOR'}, use_clear = True, margin = Patch.textureMargin)#
 
         #Save image
-        self.pixels = np.array(bpy.data.images[Patch.bakedImgName].pixels[:])
+        self.pixels = np.array(bpy.data.images[Patch.bakedImgName].pixels[:], dtype=np.float16)
 
         #Remove UVs from sight
         for vertIdx in self.verticesIdxList:
@@ -361,10 +366,7 @@ class Patch:
         v2 = self.eigenVecs[:,1]
         
         #Finding the scale of the plane according to the largest edge length
-        maxEdgeLen = 0.0
-        for edgeIdx in self.getEdgesIdx(bmeshObj):
-            maxEdgeLen = max(maxEdgeLen, bmeshObj.edges[edgeIdx].calc_length())
-        planeScale = 2.0 * maxEdgeLen
+        planeScale = 2.0 * self.maxEdgeLen
         
         ##Setting constants for the sampling
         #Python
