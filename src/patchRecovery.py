@@ -77,7 +77,14 @@ selectedObj = bpy.context.active_object
 
 if selectedObj.type != "MESH":
     raise Exception("Please choose a mesh")
-    
+
+#cleaning loose geometry    
+bpy.ops.mesh.select_mode(type='VERT') 
+bpy.ops.mesh.select_all(action='SELECT')
+bpy.ops.mesh.delete_loose()
+bpy.ops.mesh.select_all(action='DESELECT')
+       
+
 bm = bmesh.from_edit_mesh(selectedObj.data)
 bm.verts.ensure_lookup_table()
 bm.edges.ensure_lookup_table()
@@ -122,9 +129,11 @@ if len(meshPatches) == 0:
     for vert in bm.verts:
         meshPatches.append(createVertexPatch(bm, vert))
         bar.next()
-
+    
     end = time.time()
     print("Time taken : {} seconds".format(end - start))
+    
+    #meshPatches = [patch for patch in meshPatches if patch.isValid]
     
     print("Dumping into a binary file...")
     with lzma.open(patchesDataPath, 'wb') as f:
@@ -162,11 +171,11 @@ if len(texturesInfos) == 0:#Add here logic for checking whether the texture info
     bar = Bar('Extracting patch textures', max=len(meshPatches))
     for i in range(len(meshPatches)):
         patch = meshPatches[i]
+        print(patch.centerVertexIdx)
         patch.bakePatchTexture(bm)
         bar.next()
         
     texturesInfos = np.array([meshPatches[i].pixels for i in range(len(meshPatches))])
-    print(texturesInfos)
     
     print("Dumping into a binary file...")
     with lzma.open(patchesTextureFilePath, 'wb') as f:
@@ -185,6 +194,13 @@ print("Drawing the patches' eigenvectors")
 for patch in meshPatches:
     patch.drawLRF(gpencil, gp_frame, bm, 0.03, 2.0, 15.0, drawAxis = (True, True, True))
 
+bpy.ops.mesh.select_all(action='DESELECT')
+patchIdx = 518
+patch = meshPatches[patchIdx]
+for vertIdx in patch.verticesIdxList:
+    bm.verts[vertIdx].select = True
+bpy.data.images['bakedImage'].pixels = list(patch.pixels[:])
+
 ##Low rank recovery
 from sklearn.metrics.pairwise import pairwise_kernels
 testlib = ctypes.CDLL('/home/home/thefamousrat/Documents/KU Leuven/Master Thesis/MasterThesis2021/src/c_utils/libutils.so')
@@ -200,7 +216,7 @@ topoFeatures = [patch.eigenVals / np.linalg.norm(patch.eigenVals) for patch in m
 kdt = KDTree(topoFeatures,  leaf_size = 30, metric = 'euclidean')
 
 #Building the patch matrix for a patch
-patchIdx = 3988
+patchIdx = 34
 dists, neighIdx = kdt.query([topoFeatures[patchIdx]], k=clusterSize)
 neighIdx = neighIdx[0]
 patchMatrix = np.zeros((3 * Patch.Patch.sampleRes**2, clusterSize))
@@ -208,11 +224,19 @@ for i in range(clusterSize):
     patch = meshPatches[neighIdx[i]]
     patchMatrix[:,i] = getPatchNormalColumnVector(patch)
 
+print(np.linalg.norm(patchMatrix, ord = 'nuc'))
+
 ##Setting ways to compute the matrices
 #Kernel params
 d = 2.0
 c = 1.0
 invD = (d-1)/d
+#Subproblems params
+tau = 1.0
+rho = 20.0
+lambd = 0.5
+q = tau / (2.0 * rho)
+alpha = rho / lambd
 #Kernel matrix compute
 #Note : the letter 'o' is here to indicate "all elements" (of the row or the column), not as the letter 
 def getKernelMat(normalsApproxMat, c, d):
@@ -237,53 +261,64 @@ def getGrad(a_oi, i, patchMatLowRank, patchMat, CtC, alpha):
     
     H = np.multiply(P, D)
     
-    #patchMatLowRank[:,i] = a_oi
-    
     return 2.0 * (a_oi - patchMat[:,i]) - alpha*d*(patchMatLowRank @ H)
+
+def getSubProbALoss(denoised, original, CtC):
+    return np.linalg.norm(denoised - original, ord = 'fro') + ((alpha/2.0)*np.linalg.norm(CtC - getKernelMat(denoised, c, d), ord = 'fro'))
+
+def getSubProbALoss(kernMatProd, kernMat):
+    np.linalg.norm(kernMatProd, ord = 'nuc')
+    (rho/2.0)*np.linalg.norm()        
+    return np.linalg.norm(denoised - original, ord = 'fro') + ((alpha/2.0)*np.linalg.norm(CtC - getKernelMat(denoised, c, d), ord = 'fro'))
 
 ##Optimizing the matrices (step A and B from the paper)
 #Solving low-rank problem (one step starts here)
 denoisedNormals = np.copy(patchMatrix)
+for j in range(100):
+    #Optimizing C (closed-form solution)
+    kernelMatrix = getKernelMat(denoisedNormals, c, d)
+    u, singVals, vh = np.linalg.svd(kernelMatrix)
 
-kernelMatrix = getKernelMat(denoisedNormals, c, d)
-u, singVals, vh = np.linalg.svd(kernelMatrix)
+    arr = (ctypes.c_float*3)()
 
-#Optimizing C (closed-form solution)
-arr = (ctypes.c_float*3)()
-tau = 1.0
-rho = 20.0
-q = tau / (2.0 * rho)
+    phiVals = np.zeros(clusterSize)
+    roots = np.zeros(4)
+    for i in range(clusterSize):
+        singVal = singVals[i]
+        p = -singVal
+        testlib.getDepressedCubicRoots(p, q, arr)
+        for j in range(3):
+            roots[j] = arr[j]
+        
+        roots[roots < 0.0] = 0.0
+        roots_ = np.unique(roots)
+        
+        phiVals[i] = roots_[np.argmin([((rho/2.0)*(singVal - root**2.0)**2.0) + (tau * root) for root in roots_])]
+        
+    C = np.diag(phiVals) @ vh
 
-phiVals = np.zeros(clusterSize)
-roots = np.zeros(4)
-for i in range(clusterSize):
-    singVal = singVals[i]
-    p = -singVal
-    testlib.getDepressedCubicRoots(p, q, arr)
-    for j in range(3):
-        roots[j] = arr[j]
-    
-    roots[roots < 0.0] = 0.0
-    roots_ = np.unique(roots)
-    
-    phiVals[i] = roots_[np.argmin([((rho/2.0)*(singVal - root**2.0)**2.0) + (tau * root) for root in roots_])]
-    
-C = np.diag(phiVals) @ vh
+    from scipy.optimize import minimize
+    #Optimizing recovered normals (BCD)
+    CtC = C.T @ C
 
-from scipy.optimize import minimize, check_grad, approx_fprime
-#Optimizing recovered normals (BCD)
-CtC = C.T @ C
-alpha = 1.0
+    #Conducting BGD to optimize A
+    prevLoss = getSubProbALoss(denoisedNormals, patchMatrix, CtC)
+    idxList = list(range(clusterSize))
+    lossDiff = float('inf')
+    while lossDiff > 1e-3:
+        np.random.shuffle(idxList)
+        for i in idxList:
+            x0 = denoisedNormals[:,i]
+            res = minimize(getCost, x0, 
+                    args = (i,  denoisedNormals, patchMatrix, CtC, alpha), 
+                    jac = getGrad,
+                    method = "L-BFGS-B")
+            denoisedNormals[:,i] = np.copy(res.x)
+        
+        newLoss = getSubProbALoss(denoisedNormals, patchMatrix, CtC)
+        lossDiff = prevLoss - newLoss
+        prevLoss = newLoss
+        print("Yeah {}".format(lossDiff))
 
-#Conducting BGD to optimize A
-for i in range(clusterSize):
-    #i = 1
-    x0 = denoisedNormals[:,i]
-    res = minimize(getCost, x0, 
-            args = (i,  denoisedNormals, patchMatrix, CtC, alpha), 
-            jac = getGrad,
-            method = "L-BFGS-B")
-    denoisedNormals[:,i] = np.copy(res.x)
+    print(np.linalg.norm(denoisedNormals, ord = 'nuc') + lambd * np.linalg.norm(denoisedNormals - patchMatrix))
 
-#meshPatches[2225].bakePatchTexture(bm)
-bpy.data.images['bakedImage'].pixels = list(meshPatches[3045].pixels[:])

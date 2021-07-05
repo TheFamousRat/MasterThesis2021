@@ -13,6 +13,9 @@ from scipy.spatial.distance import cdist
 
 import debugDrawing
 
+class PatchBuildingError(Exception):
+    pass
+
 class Patch:
     ##Static constants
     #Related to texture baking
@@ -31,6 +34,7 @@ class Patch:
         #Creates a patch, built from a central vertex and its ringsNum neighbouring rings
         self.centerVertexIdx = centerVertexIdx
         self.facesCounts = 0
+        #self.isValid = True
 
         self.rings = []
         self.rings.append([face.index for face in bmeshObj.verts[self.centerVertexIdx].link_faces]) #Ring one, based on the central vertex's neighbourhood
@@ -50,6 +54,10 @@ class Patch:
                             self.rings[-1].append(linkedFace.index)
                             self.facesCounts += 1
 
+        #if len(self.rings[0]) == 0:
+        #    self.isValid = False
+        #    raise PatchBuildingError("Empty patch rings")
+
         self.verticesIdxList = set()
         for faceIdx in self.getFacesIdxIterator():
             for vert in bmeshObj.faces[faceIdx].verts:
@@ -57,7 +65,7 @@ class Patch:
         self.verticesIdxList = np.array(list(self.verticesIdxList))
 
         self.pixels = np.array([])
-
+        
         self.calculateIndicators(bmeshObj)
 
     def calculateIndicators(self, bmeshObj):
@@ -77,6 +85,10 @@ class Patch:
 
         #Max edge length
         self.maxEdgeLen = np.amax([bmeshObj.edges[edgeIdx].calc_length() for edgeIdx in self.getEdgesIdx(bmeshObj)])
+
+        #if math.pi * (len(self.rings) * self.maxEdgeLen * 0.5)**2 > self.totalArea:
+        #    self.isValid = False
+        #    raise PatchBuildingError("Empty patch rings")
 
         #Barycenter (unweighted average of vertices)
         self.barycenter = np.average([np.array(bmeshObj.verts[vertexIdx].co) for vertexIdx in self.verticesIdxList], axis = 0) 
@@ -250,7 +262,6 @@ class Patch:
                 if node.type == 'TEX_IMAGE':
                     node.image.pack()
                     node.image.unpack()
-                    node.image.pack()
             #Preparing the image node
             if not Patch.imageNodeName in mat.node_tree.nodes:
                 nodeTree.nodes.new("ShaderNodeTexImage").name = Patch.imageNodeName
