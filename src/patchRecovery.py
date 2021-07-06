@@ -19,6 +19,7 @@ import hashlib
 import ctypes
 #Scikit suite
 import numpy as np
+import scipy
 from scipy.spatial.distance import cdist
 from sklearn.metrics import pairwise_distances_argmin_min
 from scipy.optimize import linear_sum_assignment
@@ -211,7 +212,7 @@ def getPatchNormalColumnVector(patch):
     return np.concatenate(np.array([patch.sampledNormals[i] for i in range(Patch.Patch.sampleRes**2)]), axis = 0)
 
 #Building the tree
-clusterSize = 20
+clusterSize = 30
 topoFeatures = [patch.eigenVals / np.linalg.norm(patch.eigenVals) for patch in meshPatches]
 kdt = KDTree(topoFeatures,  leaf_size = 30, metric = 'euclidean')
 
@@ -225,97 +226,75 @@ for i in range(clusterSize):
     patchMatrix[:,i] = getPatchNormalColumnVector(patch)
 
 ##Setting ways to compute the matrices
+#Optimizitation params
+w = 0.5
+c = 1.2
+lambd0 = 0.5
+itersMax = 100
+eps = 1e-4
 #Kernel params
-d = 2.0
-c = 1.0
-invD = (d-1)/d
-#Subproblems params
-tau = 1.0
-rho = 20.0
-lambd = 0.5
-q = tau / (2.0 * rho)
-alpha = rho / lambd
-#Kernel matrix compute
-#Note : the letter 'o' is here to indicate "all elements" (of the row or the column), not as the letter 
-def getKernelMat(normalsApproxMat, c, d):
-    return pairwise_kernels(normalsApproxMat.T, metric = 'poly', degree = d, gamma = 1, coef0 = c)
+sigma = 5.0
+sigmaSq = sigma**2
+gamma = 1.0/(2.0*sigmaSq)
+##Kernel matrix compute
+def getKernelMat(normalsApproxMat):
+    return pairwise_kernels(normalsApproxMat.T, metric = 'rbf', gamma = gamma)
 
-def getCost(a_oi, i, patchMatLowRank, patchMat, CtC, alpha):
-    patchMatLowRank[:,i] = a_oi
-    K = pairwise_kernels([a_oi], patchMatLowRank.T, metric = 'poly', degree = d, gamma = 1, coef0 = c)[0]
-    
-    D = CtC[i,:] - K
-    
-    return (np.linalg.norm(a_oi - patchMat[:,i])**2) + (alpha/2.0)*(np.linalg.norm(D)**2)
+def softThresholdMat(mat, thres):
+    A = np.abs(mat) - thres
+    return np.sign(mat) * np.multiply(A, A > 0.0)
 
-def getGrad(a_oi, i, patchMatLowRank, patchMat, CtC, alpha):
-    patchMatLowRank[:,i] = a_oi
-    K = pairwise_kernels([a_oi], patchMatLowRank.T, metric = 'poly', degree = d, gamma = 1, coef0 = c)[0]
+def gLgX_m(gLgK,K,M,E):
+    X = M - E
+    K = getKernelMat(X)
     
-    D = CtC[i,:] - K
+    H = np.multiply(gLgK, K)
+    BH = np.ones(X.shape) @ H
+    I = np.identity(H.shape[0])
     
-    P = np.power(K, invD)
-    P[i] = 2.0 * P[i]
+    g = -(2.0/sigmaSq)*(X @ H - np.multiply(X, BH))
     
-    H = np.multiply(P, D)
-    
-    return 2.0 * (a_oi - patchMat[:,i]) - alpha*d*(patchMatLowRank @ H)
-
-def getSubProbALoss(denoised, original, CtC):
-    return np.linalg.norm(denoised - original, ord = 'fro') + ((alpha/2.0)*np.linalg.norm(CtC - getKernelMat(denoised, c, d), ord = 'fro'))
-
-def getSubProbALoss(kernMatProd, kernMat):
-    np.linalg.norm(kernMatProd, ord = 'nuc')
-    (rho/2.0)*np.linalg.norm()        
-    return np.linalg.norm(denoised - original, ord = 'fro') + ((alpha/2.0)*np.linalg.norm(CtC - getKernelMat(denoised, c, d), ord = 'fro'))
+    L = np.linalg.norm((2.0/sigmaSq)*(H-I*np.average(BH)), ord = 2)
+    return g, L
 
 ##Optimizing the matrices (step A and B from the paper)
 #Solving low-rank problem (one step starts here)
-denoisedNormals = np.copy(patchMatrix)
-if False:
-    #Optimizing C (closed-form solution)
-    kernelMatrix = getKernelMat(denoisedNormals, c, d)
-    u, singVals, vh = np.linalg.svd(kernelMatrix)
+M = patchMatrix
+E = np.zeros(M.shape)
+normM = np.sum(np.abs(M))
+lambd = clusterSize * lambd0 / normM
 
-    arr = (ctypes.c_float*3)()
+print(np.linalg.norm(M - E, ord = 'nuc'))
 
-    phiVals = np.zeros(clusterSize)
-    roots = np.zeros(4)
-    for i in range(clusterSize):
-        singVal = singVals[i]
-        p = -singVal
-        testlib.getDepressedCubicRoots(p, q, arr)
-        for j in range(3):
-            roots[j] = arr[j]
-        
-        roots[roots < 0.0] = 0.0
-        roots_ = np.unique(roots)
-        
-        phiVals[i] = roots_[np.argmin([((rho/2.0)*(singVal - root**2.0)**2.0) + (tau * root) for root in roots_])]
-        
-    C = np.diag(phiVals) @ vh
-
-    from scipy.optimize import minimize
-    #Optimizing recovered normals (BCD)
-    CtC = C.T @ C
-
-    #Conducting BGD to optimize A
-    prevLoss = getSubProbALoss(denoisedNormals, patchMatrix, CtC)
-    idxList = list(range(clusterSize))
-    lossDiff = float('inf')
-    while lossDiff > 1e-3:
-        np.random.shuffle(idxList)
-        for i in idxList:
-            x0 = denoisedNormals[:,i]
-            res = minimize(getCost, x0, 
-                    args = (i,  denoisedNormals, patchMatrix, CtC, alpha), 
-                    jac = getGrad,
-                    method = "L-BFGS-B")
-            denoisedNormals[:,i] = np.copy(res.x)
-        
-        newLoss = getSubProbALoss(denoisedNormals, patchMatrix, CtC)
-        lossDiff = prevLoss - newLoss
-        prevLoss = newLoss
-        print("Yeah {}".format(lossDiff))
-
-    print(np.linalg.norm(denoisedNormals, ord = 'nuc') + lambd * np.linalg.norm(denoisedNormals - patchMatrix))
+prevE = np.copy(E)
+iterNum = 0
+prevCost = float('inf')
+print(prevCost)
+while iterNum < itersMax:
+    iterNum += 1
+    ##One step beginning
+    K = getKernelMat(M - E)
+    Kp2 = scipy.linalg.sqrtm(K)
+    
+    I = np.identity(K.shape[0])
+    gLgK = 0.5 * scipy.linalg.inv(Kp2)# @ scipy.linalg.inv(K + I*1e-5))
+    
+    f = np.trace(Kp2)
+    gE, L = gLgX_m(gLgK, K, M, E)
+    
+    stepSize = w * L
+    prevE = np.copy(E)
+    E = softThresholdMat(E - gE / stepSize, lambd / stepSize)
+    
+    newCost = f + lambd * np.sum(np.abs(E)) 
+    if newCost > prevCost:
+        w = min(5.0, w*c)
+    
+    prevCost = newCost
+    
+    if np.linalg.norm(E - prevE) / normM < eps:
+        break
+    
+print("Stopped after {} iterations.".format(iterNum))
+print(np.linalg.norm(M - E, ord = 'nuc'))
+print(np.average(np.abs(E)))

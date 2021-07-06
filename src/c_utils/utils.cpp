@@ -105,7 +105,7 @@ int _getClosestFaceFromRay(double* facePointsArr, unsigned int faceCount, double
 
     int faceIdxPos = 0;
 
-    /*float smallestDist = INF;
+    float smallestDist = INF;
     for (int i(0) ; i < faceCount ; i++) {
         int faceCoordsStart = i * 9;
         Vector3f v0(facePointsArr[faceCoordsStart], facePointsArr[faceCoordsStart + 1], facePointsArr[faceCoordsStart + 2]);
@@ -122,9 +122,9 @@ int _getClosestFaceFromRay(double* facePointsArr, unsigned int faceCount, double
                 smallestDist = dist;
             }
         }
-    }*/
+    }
 
-    //Checking all the faces crossed by the ray (if any)
+    /*//Checking all the faces crossed by the ray (if any)
     std::vector<bool> faceCrossed(faceCount);
     std::vector<Vector3f> crossIntersects;
     Vector3f intersecPos;
@@ -197,7 +197,7 @@ int _getClosestFaceFromRay(double* facePointsArr, unsigned int faceCount, double
                 faceIdxPos = i;
             }
         }
-    }
+    }*/
 
     return faceIdxPos;
 }
