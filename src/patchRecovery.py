@@ -217,7 +217,7 @@ topoFeatures = [patch.eigenVals / np.linalg.norm(patch.eigenVals) for patch in m
 kdt = KDTree(topoFeatures,  leaf_size = 30, metric = 'euclidean')
 
 #Building the patch matrix for a patch
-patchIdx = 34
+patchIdx = 340
 dists, neighIdx = kdt.query([topoFeatures[patchIdx]], k=clusterSize)
 neighIdx = neighIdx[0]
 patchMatrix = np.zeros((3 * Patch.Patch.sampleRes**2, clusterSize))
@@ -244,10 +244,7 @@ def softThresholdMat(mat, thres):
     A = np.abs(mat) - thres
     return np.sign(mat) * np.multiply(A, A > 0.0)
 
-def gLgX_m(gLgK,K,M,E):
-    X = M - E
-    K = getKernelMat(X)
-    
+def getLossAndGradient(gLgK,K,X):
     H = np.multiply(gLgK, K)
     BH = np.ones(X.shape) @ H
     I = np.identity(H.shape[0])
@@ -257,44 +254,53 @@ def gLgX_m(gLgK,K,M,E):
     L = np.linalg.norm((2.0/sigmaSq)*(H-I*np.average(BH)), ord = 2)
     return g, L
 
-##Optimizing the matrices (step A and B from the paper)
-#Solving low-rank problem (one step starts here)
+##Solving low-rank problem
+#Matrices
 M = patchMatrix
 E = np.zeros(M.shape)
+X = M - E
+#Constants
+I = np.identity(M.shape[1])
 normM = np.sum(np.abs(M))
 lambd = clusterSize * lambd0 / normM
 
-print(np.linalg.norm(M - E, ord = 'nuc'))
+#print(np.linalg.norm(M - E, ord = 'nuc'))
 
-prevE = np.copy(E)
 iterNum = 0
 prevCost = float('inf')
-print(prevCost)
+
+start = time.time()
+
 while iterNum < itersMax:
     iterNum += 1
     ##One step beginning
-    K = getKernelMat(M - E)
-    Kp2 = scipy.linalg.sqrtm(K)
+    #Kernel matrix computations
+    K = getKernelMat(X)
+    Ksqrt = scipy.linalg.sqrtm(K)
     
-    I = np.identity(K.shape[0])
-    gLgK = 0.5 * scipy.linalg.inv(Kp2)# @ scipy.linalg.inv(K + I*1e-5))
+    #Gradient computation
+    gLgK = 0.5 * scipy.linalg.inv(Ksqrt)# @ scipy.linalg.inv(K + I*1e-5))
+    gE, L = getLossAndGradient(gLgK, K, X)
     
-    f = np.trace(Kp2)
-    gE, L = gLgX_m(gLgK, K, M, E)
-    
+    #Updating E (and X)
     stepSize = w * L
     prevE = np.copy(E)
     E = softThresholdMat(E - gE / stepSize, lambd / stepSize)
+    X = M - E
     
-    newCost = f + lambd * np.sum(np.abs(E)) 
+    #Updating the learning rate's scale
+    newCost = np.trace(Ksqrt) + lambd * np.sum(np.abs(E)) 
     if newCost > prevCost:
         w = min(5.0, w*c)
-    
     prevCost = newCost
     
+    #Convergence condition checking
     if np.linalg.norm(E - prevE) / normM < eps:
         break
-    
+
+end = time.time()
+print("{} seconds per iteration".format((end - start)/iterNum))
+   
 print("Stopped after {} iterations.".format(iterNum))
 print(np.linalg.norm(M - E, ord = 'nuc'))
 print(np.average(np.abs(E)))
