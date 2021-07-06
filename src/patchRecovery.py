@@ -224,8 +224,6 @@ for i in range(clusterSize):
     patch = meshPatches[neighIdx[i]]
     patchMatrix[:,i] = getPatchNormalColumnVector(patch)
 
-print(np.linalg.norm(patchMatrix, ord = 'nuc'))
-
 ##Setting ways to compute the matrices
 #Kernel params
 d = 2.0
@@ -274,7 +272,7 @@ def getSubProbALoss(kernMatProd, kernMat):
 ##Optimizing the matrices (step A and B from the paper)
 #Solving low-rank problem (one step starts here)
 denoisedNormals = np.copy(patchMatrix)
-for j in range(100):
+if False:
     #Optimizing C (closed-form solution)
     kernelMatrix = getKernelMat(denoisedNormals, c, d)
     u, singVals, vh = np.linalg.svd(kernelMatrix)
@@ -321,4 +319,3 @@ for j in range(100):
         print("Yeah {}".format(lossDiff))
 
     print(np.linalg.norm(denoisedNormals, ord = 'nuc') + lambd * np.linalg.norm(denoisedNormals - patchMatrix))
-
