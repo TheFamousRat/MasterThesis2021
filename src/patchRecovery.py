@@ -212,18 +212,40 @@ def getPatchNormalColumnVector(patch):
 topoFeatures = [patch.eigenVals / np.linalg.norm(patch.eigenVals) for patch in meshPatches]
 kdt = KDTree(topoFeatures,  leaf_size = 20, metric = 'euclidean')
 rankRecoverer = LowRankRecovery.LowRankRecovery()
-clusterSize = 20
+clusterSize = 40
 
 bar = Bar('Performing low-rank recovery', max=len(meshPatches))
 for patchIdx in range(len(meshPatches)):
+    patch = meshPatches[patchIdx]
     #Building the patch matrix
     dists, neighIdx = kdt.query([topoFeatures[patchIdx]], k=clusterSize)
     neighIdx = neighIdx[0]
     patchMatrix = np.zeros((3 * Patch.Patch.sampleRes**2, clusterSize))
     for i in range(clusterSize):
-        patch = meshPatches[neighIdx[i]]
-        patchMatrix[:,i] = getPatchNormalColumnVector(patch)
+        neighbourPatch = meshPatches[neighIdx[i]]
+        patchMatrix[:,i] = getPatchNormalColumnVector(neighbourPatch)
     
     #Performing low-rank recovery
     E = rankRecoverer.recoverLowRank(patchMatrix)
+    patchRecCol = (patchMatrix - E)[:,0]
+    
+    #Recovering a normal for the central vertex
+    patchRecNormals = np.array([[patchRecCol[x*3 + i] for i in range(3)] for x in range(len(patchRecCol) // 3)])
+    patchRecNormals = (1.0 / np.linalg.norm(patchRecNormals, axis = 1))[:, np.newaxis] * patchRecNormals #Normalizing the normals
+    
+    #Current normal of the central patch vertex
+    patchCenterPos = np.array(bm.verts[patch.centerVertexIdx].co)
+    centralNormal = patch.rotMatInv @ patch.eigenVecs[:,2]
+    centralNormal = centralNormal / np.linalg.norm(centralNormal)
+    
+    #Averaging normals to get new normals
+    angles = [math.acos(np.dot(centralNormal, normal)) for normal in patchRecNormals]
+    newNormal = patch.eigenVecs @ np.average(patchRecNormals, axis = 0)
+    
+    if np.dot(newNormal, centralNormal) < 0.8:
+        debugDrawing.draw_line(gpencil, gp_frame, (patchCenterPos, patchCenterPos + 0.02 * centralNormal), (0.5, 2.5), "ff00ff")
+        debugDrawing.draw_line(gpencil, gp_frame, (patchCenterPos, patchCenterPos + 0.02 * newNormal), (1.0, 5.0), "0000ff")
+    
     bar.next()
+    
+
