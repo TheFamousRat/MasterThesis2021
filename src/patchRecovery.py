@@ -210,9 +210,9 @@ def getPatchNormalColumnVector(patch):
 
 #Building the tree
 topoFeatures = [patch.eigenVals / np.linalg.norm(patch.eigenVals) for patch in meshPatches]
-kdt = KDTree(topoFeatures,  leaf_size = 20, metric = 'euclidean')
+kdt = KDTree(topoFeatures,  leaf_size = 40, metric = 'euclidean')
 rankRecoverer = LowRankRecovery.LowRankRecovery()
-clusterSize = 40
+clusterSize = 20
 
 bar = Bar('Performing low-rank recovery', max=len(meshPatches))
 for patchIdx in range(len(meshPatches)):
@@ -235,14 +235,15 @@ for patchIdx in range(len(meshPatches)):
     
     #Current normal of the central patch vertex
     patchCenterPos = np.array(bm.verts[patch.centerVertexIdx].co)
-    centralNormal = patch.rotMatInv @ patch.eigenVecs[:,2]
+    centralNormal = patch.eigenVecs[:,2]
     centralNormal = centralNormal / np.linalg.norm(centralNormal)
     
     #Averaging normals to get new normals
     angles = [math.acos(np.dot(centralNormal, normal)) for normal in patchRecNormals]
-    newNormal = patch.eigenVecs @ np.average(patchRecNormals, axis = 0)
+    avg = np.average(patchRecNormals, axis = 0) 
+    newNormal = patch.eigenVecs @ (avg / np.linalg.norm(avg))
     
-    if np.dot(newNormal, centralNormal) < 0.8:
+    if np.dot(newNormal, centralNormal) < 0.98:
         debugDrawing.draw_line(gpencil, gp_frame, (patchCenterPos, patchCenterPos + 0.02 * centralNormal), (0.5, 2.5), "ff00ff")
         debugDrawing.draw_line(gpencil, gp_frame, (patchCenterPos, patchCenterPos + 0.02 * newNormal), (1.0, 5.0), "0000ff")
     
