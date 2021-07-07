@@ -19,10 +19,6 @@ import hashlib
 import ctypes
 #Scikit suite
 import numpy as np
-import scipy
-from scipy.spatial.distance import cdist
-from sklearn.metrics import pairwise_distances_argmin_min
-from scipy.optimize import linear_sum_assignment
 from sklearn.neighbors import KDTree
 #Show progress bar utility
 from progress.bar import Bar
@@ -38,10 +34,12 @@ for pathToAdd in pathsToAdd:
 
 import Patch
 import debugDrawing
+import LowRankRecovery
 
 import importlib
 importlib.reload(Patch)
 importlib.reload(debugDrawing)
+importlib.reload(LowRankRecovery)
 
 for pathToAdd in pathsToAdd:
     sys.path.remove(pathToAdd)
@@ -203,7 +201,6 @@ for vertIdx in patch.verticesIdxList:
 bpy.data.images['bakedImage'].pixels = list(patch.pixels[:])
 
 ##Low rank recovery
-from sklearn.metrics.pairwise import pairwise_kernels
 testlib = ctypes.CDLL('/home/home/thefamousrat/Documents/KU Leuven/Master Thesis/MasterThesis2021/src/c_utils/libutils.so')
 testlib.getDepressedCubicRoots.argtypes = (ctypes.c_float, ctypes.c_float, ctypes.POINTER(ctypes.c_float))
 
@@ -225,85 +222,9 @@ for i in range(clusterSize):
     patch = meshPatches[neighIdx[i]]
     patchMatrix[:,i] = getPatchNormalColumnVector(patch)
 
-##Setting ways to compute the matrices
-#Optimizitation params
-w = 0.5
-c = 1.2
-lambd0 = 0.5
-itersMax = 100
-eps = 1e-4
-#Kernel params
-sigma = 5.0
-sigmaSq = sigma**2
-gamma = 1.0/(2.0*sigmaSq)
-##Kernel matrix compute
-def getKernelMat(normalsApproxMat):
-    return pairwise_kernels(normalsApproxMat.T, metric = 'rbf', gamma = gamma)
+print(np.linalg.norm(patchMatrix, ord = 'nuc'))
 
-def softThresholdMat(mat, thres):
-    A = np.abs(mat) - thres
-    return np.sign(mat) * np.multiply(A, A > 0.0)
-
-def getLossAndGradient(gLgK,K,X):
-    H = np.multiply(gLgK, K)
-    BH = np.ones(X.shape) @ H
-    I = np.identity(H.shape[0])
-    
-    g = -(2.0/sigmaSq)*(X @ H - np.multiply(X, BH))
-    
-    L = np.linalg.norm((2.0/sigmaSq)*(H-I*np.average(BH)), ord = 2)
-    return g, L
-
-##Solving low-rank problem
-#Code adapted from https://github.com/jicongfan/RKPCA_TNNLS2019
-#Matrices
-M = patchMatrix
-E = np.zeros(M.shape)
-X = M - E
-#Constants
-I = np.identity(M.shape[1])
-normM = np.sum(np.abs(M))
-lambd = clusterSize * lambd0 / normM
-
-#print(np.linalg.norm(M - E, ord = 'nuc'))
-
-iterNum = 0
-prevCost = float('inf')
+rankRecoverer = LowRankRecovery.LowRankRecovery()
+E = rankRecoverer.recoverLowRank(patchMatrix)
 
 print(np.linalg.norm(M - E, ord = 'nuc'))
-
-start = time.time()
-
-while iterNum < itersMax:
-    iterNum += 1
-    ##One step beginning
-    #Kernel matrix computations
-    K = getKernelMat(X)
-    Ksqrt = scipy.linalg.sqrtm(K)
-    
-    #Gradient computation
-    gLgK = 0.5 * scipy.linalg.inv(Ksqrt)# @ scipy.linalg.inv(K + I*1e-5))
-    gE, L = getLossAndGradient(gLgK, K, X)
-    
-    #Updating E (and X)
-    stepSize = w * L
-    prevE = np.copy(E)
-    E = softThresholdMat(E - gE / stepSize, lambd / stepSize)
-    X = M - E
-    
-    #Updating the learning rate's scale
-    newCost = np.trace(Ksqrt) + lambd * np.sum(np.abs(E)) 
-    if newCost > prevCost:
-        w = min(5.0, w*c)
-    prevCost = newCost
-    
-    #Convergence condition checking
-    if np.linalg.norm(E - prevE) / normM < eps:
-        break
-
-end = time.time()
-print("{} seconds per iteration".format((end - start)/iterNum))
-   
-print("Stopped after {} iterations.".format(iterNum))
-print(np.linalg.norm(M - E, ord = 'nuc'))
-print(np.average(np.abs(E)))
