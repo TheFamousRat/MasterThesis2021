@@ -255,6 +255,7 @@ def getLossAndGradient(gLgK,K,X):
     return g, L
 
 ##Solving low-rank problem
+#Code adapted from https://github.com/jicongfan/RKPCA_TNNLS2019
 #Matrices
 M = patchMatrix
 E = np.zeros(M.shape)
@@ -268,6 +269,8 @@ lambd = clusterSize * lambd0 / normM
 
 iterNum = 0
 prevCost = float('inf')
+
+print(np.linalg.norm(M - E, ord = 'nuc'))
 
 start = time.time()
 
