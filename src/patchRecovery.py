@@ -139,53 +139,54 @@ if len(meshPatches) == 0:
         pickle.dump(meshPatches, f)
     print("Done")
 
-#Loading sampled texturesz
-texturesInfos = []
-Patch.Patch.setupBakingEnvironment(bm)
-patchesTextureFilePath = os.path.join(meshDataPath, 'textures.pkl')
+#Loading sampled textures
+if False:
+    texturesInfos = []
+    Patch.Patch.setupBakingEnvironment(bm)
+    patchesTextureFilePath = os.path.join(meshDataPath, 'textures.pkl')
 
-#Trying to load baked data (if it exists)
-if os.path.exists(patchesTextureFilePath):
-    print("Baked textures file found in {}. Loading...".format(patchesTextureFilePath))
-    with lzma.open(patchesTextureFilePath, 'rb') as f:
-        texturesInfos = pickle.load(f) 
-    
-    print("Checking integrity...")
-    patchRefIdx = 0
-    (meshPatches[patchRefIdx]).bakePatchTexture(bm)
-    patchRef = np.array((meshPatches[patchRefIdx]).pixels)
-    patchBaked = np.array(texturesInfos[patchRefIdx])
-    
-    if DeepDiff(patchRef, patchBaked) != {}:
-        print("Outdaded or invalid baked textures found, rebaking all textures")
-        texturesInfos = []
-    else:
-        print("Patch integrity test successful")
+    #Trying to load baked data (if it exists)
+    if os.path.exists(patchesTextureFilePath):
+        print("Baked textures file found in {}. Loading...".format(patchesTextureFilePath))
+        with lzma.open(patchesTextureFilePath, 'rb') as f:
+            texturesInfos = pickle.load(f) 
+        
+        print("Checking integrity...")
+        patchRefIdx = 0
+        (meshPatches[patchRefIdx]).bakePatchTexture(bm)
+        patchRef = np.array((meshPatches[patchRefIdx]).pixels)
+        patchBaked = np.array(texturesInfos[patchRefIdx])
+        
+        if DeepDiff(patchRef, patchBaked) != {}:
+            print("Outdaded or invalid baked textures found, rebaking all textures")
+            texturesInfos = []
+        else:
+            print("Patch integrity test successful")
 
-if len(texturesInfos) == 0:#Add here logic for checking whether the texture info of patches is correct
-    print("Setting up baking environment...")
+    if len(texturesInfos) == 0:#Add here logic for checking whether the texture info of patches is correct
+        print("Setting up baking environment...")
 
-    print("Baking patch textures...")
+        print("Baking patch textures...")
 
-    bar = Bar('Extracting patch textures', max=len(meshPatches))
+        bar = Bar('Extracting patch textures', max=len(meshPatches))
+        for i in range(len(meshPatches)):
+            patch = meshPatches[i]
+            print(patch.centerVertexIdx)
+            patch.bakePatchTexture(bm)
+            bar.next()
+            
+        texturesInfos = np.array([meshPatches[i].pixels for i in range(len(meshPatches))])
+        
+        print("Dumping into a binary file...")
+        with lzma.open(patchesTextureFilePath, 'wb') as f:
+            pickle.dump(texturesInfos, f)
+        print("Done")
+
+    print("Setting texture data...")
     for i in range(len(meshPatches)):
         patch = meshPatches[i]
-        print(patch.centerVertexIdx)
-        patch.bakePatchTexture(bm)
-        bar.next()
-        
-    texturesInfos = np.array([meshPatches[i].pixels for i in range(len(meshPatches))])
-    
-    print("Dumping into a binary file...")
-    with lzma.open(patchesTextureFilePath, 'wb') as f:
-        pickle.dump(texturesInfos, f)
+        patch.pixels = texturesInfos[i]
     print("Done")
-
-print("Setting texture data...")
-for i in range(len(meshPatches)):
-    patch = meshPatches[i]
-    patch.pixels = texturesInfos[i]
-print("Done")
 
 #Rest of the logic
 print("===LOGIC START===")
@@ -213,6 +214,9 @@ topoFeatures = [patch.eigenVals / np.linalg.norm(patch.eigenVals) for patch in m
 kdt = KDTree(topoFeatures,  leaf_size = 40, metric = 'euclidean')
 rankRecoverer = LowRankRecovery.LowRankRecovery()
 clusterSize = 20
+
+#Performing recovery on each patch
+newNormals = {}
 
 bar = Bar('Performing low-rank recovery', max=len(meshPatches))
 for patchIdx in range(len(meshPatches)):
@@ -243,10 +247,40 @@ for patchIdx in range(len(meshPatches)):
     avg = np.average(patchRecNormals, axis = 0) 
     newNormal = patch.eigenVecs @ (avg / np.linalg.norm(avg))
     
-    if np.dot(newNormal, centralNormal) < 0.98:
-        debugDrawing.draw_line(gpencil, gp_frame, (patchCenterPos, patchCenterPos + 0.02 * centralNormal), (0.5, 2.5), "ff00ff")
-        debugDrawing.draw_line(gpencil, gp_frame, (patchCenterPos, patchCenterPos + 0.02 * newNormal), (1.0, 5.0), "0000ff")
-    
+    newNormals[patch.centerVertexIdx] = newNormal    
+
     bar.next()
     
+#Correcting vertex positions
+newPos = {}
 
+print("Updating vertex positions")
+for patch in meshPatches:
+    centerVert = bm.verts[patch.centerVertexIdx]
+    centerVertexPos = np.array(centerVert.co)
+    
+    disp = np.array([0.0, 0.0, 0.0])
+    
+    for neighFace in centerVert.link_faces:
+        faceBarycenter = np.array(neighFace.calc_center_median())
+        faceNormal = np.array([0.0, 0.0, 0.0])
+        for faceVertNum in range(3):
+            faceVertIdx = neighFace.verts[faceVertNum].index
+            faceNormal += newNormals[faceVertIdx] * np.linalg.norm(faceBarycenter - np.array(bm.verts[faceVertIdx].co))
+        faceNormal = faceNormal / np.linalg.norm(faceNormal)
+        
+        sharedEdges = [edge for edge in neighFace.edges if (centerVert in list(edge.verts))]
+        
+        for edge in sharedEdges:
+            otherVert = edge.verts[0 if list(neighFace.edges[1].verts)[0] != centerVert else 1]
+            disp += faceNormal * np.dot(faceNormal, np.array(otherVert.co) - centerVertexPos)
+    
+    disp = (1.0/(3.0 * len(centerVert.link_faces))) * disp
+    
+    newPos[patch.centerVertexIdx] = centerVertexPos + disp 
+
+#Applying new positions
+for vIdx in newPos:
+    bm.verts[vIdx].co = newPos[vIdx]
+    
+bmesh.update_edit_mesh(bpy.context.active_object.data)
