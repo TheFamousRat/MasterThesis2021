@@ -189,16 +189,16 @@ print("Done")
 
 #Rest of the logic
 print("===LOGIC START===")
-print("Drawing the patches' eigenvectors")
-for patch in meshPatches:
-    patch.drawLRF(gpencil, gp_frame, bm, 0.03, 2.0, 15.0, drawAxis = (True, True, True))
+#print("Drawing the patches' eigenvectors")
+#for patch in meshPatches:
+#    patch.drawLRF(gpencil, gp_frame, bm, 0.03, 2.0, 15.0, drawAxis = (True, True, True))
 
-bpy.ops.mesh.select_all(action='DESELECT')
-patchIdx = 518
-patch = meshPatches[patchIdx]
-for vertIdx in patch.verticesIdxList:
-    bm.verts[vertIdx].select = True
-bpy.data.images['bakedImage'].pixels = list(patch.pixels[:])
+#bpy.ops.mesh.select_all(action='DESELECT')
+#patchIdx = 518
+#patch = meshPatches[patchIdx]
+#for vertIdx in patch.verticesIdxList:
+#    bm.verts[vertIdx].select = True
+#bpy.data.images['bakedImage'].pixels = list(patch.pixels[:])
 
 ##Low rank recovery
 testlib = ctypes.CDLL('/home/home/thefamousrat/Documents/KU Leuven/Master Thesis/MasterThesis2021/src/c_utils/libutils.so')
@@ -209,22 +209,21 @@ def getPatchNormalColumnVector(patch):
     return np.concatenate(np.array([patch.sampledNormals[i] for i in range(Patch.Patch.sampleRes**2)]), axis = 0)
 
 #Building the tree
-clusterSize = 30
 topoFeatures = [patch.eigenVals / np.linalg.norm(patch.eigenVals) for patch in meshPatches]
-kdt = KDTree(topoFeatures,  leaf_size = 30, metric = 'euclidean')
-
-#Building the patch matrix for a patch
-patchIdx = 340
-dists, neighIdx = kdt.query([topoFeatures[patchIdx]], k=clusterSize)
-neighIdx = neighIdx[0]
-patchMatrix = np.zeros((3 * Patch.Patch.sampleRes**2, clusterSize))
-for i in range(clusterSize):
-    patch = meshPatches[neighIdx[i]]
-    patchMatrix[:,i] = getPatchNormalColumnVector(patch)
-
-print(np.linalg.norm(patchMatrix, ord = 'nuc'))
-
+kdt = KDTree(topoFeatures,  leaf_size = 20, metric = 'euclidean')
 rankRecoverer = LowRankRecovery.LowRankRecovery()
-E = rankRecoverer.recoverLowRank(patchMatrix)
+clusterSize = 20
 
-print(np.linalg.norm(M - E, ord = 'nuc'))
+bar = Bar('Performing low-rank recovery', max=len(meshPatches))
+for patchIdx in range(len(meshPatches)):
+    #Building the patch matrix
+    dists, neighIdx = kdt.query([topoFeatures[patchIdx]], k=clusterSize)
+    neighIdx = neighIdx[0]
+    patchMatrix = np.zeros((3 * Patch.Patch.sampleRes**2, clusterSize))
+    for i in range(clusterSize):
+        patch = meshPatches[neighIdx[i]]
+        patchMatrix[:,i] = getPatchNormalColumnVector(patch)
+    
+    #Performing low-rank recovery
+    E = rankRecoverer.recoverLowRank(patchMatrix)
+    bar.next()
