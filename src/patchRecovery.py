@@ -13,7 +13,7 @@ from PIL import Image
 #Blender libs
 import bpy
 import bmesh
-#Hashing utilies for mesh unique identification
+#Hashing utilities for mesh unique identification
 import hashlib
 #C communication
 import ctypes
@@ -22,8 +22,10 @@ import numpy as np
 from sklearn.neighbors import KDTree
 #Show progress bar utility
 from progress.bar import Bar
-#
+#Deep difference for object instance matching
 from deepdiff import DeepDiff
+#Multithreading
+from concurrent.futures import ThreadPoolExecutor
 
 ##Local libraries (re-)loading
 #Loading user-defined modules (subject to frequent changes and needed reloading)
@@ -57,18 +59,37 @@ gp_frame = gp_layer.frames.new(0)
 lineSize = 0.015
 axisColors = ["ff0000", "00ff00", "0000ff"] #Colors of the XYZ axis
 
+###Classes (for multithreading mostly)
+class PatchBuilder:
+    def __init__(self, bmeshObj_):
+        self.bmeshObj = bmeshObj_
+        
+    def createVertexPatch(self, vertIdx):
+        return Patch.Patch(self.bmeshObj, self.bmeshObj.verts[vertIdx].index, RINGS_NUM)
+
 ### Functions
 def getMeshHash(obj):
     return hashlib.sha224( str(obj.data.vertices).strip('[]').encode('utf-8') ).hexdigest()
-    
-def createVertexPatch(bmeshObj, vertex):
-    return Patch.Patch(bmeshObj, vertex.index, RINGS_NUM)
-    
+
 def intToSignedBitList(val, bitsAmount):
     """
     Takes an int as parameter and converts it to a signed bit list (True = -1, False = 1) of size bitsAmount
     """
     return [1-2*bool(val & (1<<j)) for j in range(bitsAmount)]
+
+def buildMeshPatches(patchBuilder):
+    #Preparing the building
+    meshPatches_ = [None] * len(patchBuilder.bmeshObj.verts)
+    poolData = [vert.index for vert in patchBuilder.bmeshObj.verts]
+    
+    #Multithreaded building
+    bar = Bar('Creating patches around vertices', max=len(poolData))
+    with ThreadPoolExecutor(max_workers = 4) as executor:
+        for res in executor.map(patchBuilder.createVertexPatch, poolData):
+            meshPatches_[res.centerVertexIdx] = res
+            bar.next()
+            
+    return meshPatches_
 
 ###Body
 #Creating the bmesh
@@ -97,6 +118,7 @@ if not os.path.exists(meshDataPath):
 ##Covering the mesh with patches
 print("===BAKING START===")
 meshPatches = []
+patchBuilder = PatchBuilder(bm)
 
 #Checking in patches were baked/are still up to date
 patchesDataPath = os.path.join(meshDataPath, 'patches.pkl')
@@ -108,9 +130,8 @@ if os.path.exists(patchesDataPath):
     
     #Checking equality between two patches for the same mesh
     print("Checking integrity...")
-    patchIdx = 0
-    patchRef = createVertexPatch(bm, bm.verts[patchIdx])
-    patchBaked = meshPatches[patchIdx]
+    patchBaked = meshPatches[0]
+    patchRef = patchBuilder.createVertexPatch(patchBaked.centerVertexIdx)
     
     if DeepDiff(patchRef, patchBaked) != {}:
         print("Outdaded or invalid baked patches found, rebuilding all patches")
@@ -124,15 +145,11 @@ if len(meshPatches) == 0:
     print("Building patches for the mesh")
     start = time.time()
     
-    bar = Bar('Creating patches around vertices', max=len(bm.verts))
-    for vert in bm.verts:
-        meshPatches.append(createVertexPatch(bm, vert))
-        bar.next()
+    #Building the patches
+    meshPatches = buildMeshPatches(patchBuilder)
     
     end = time.time()
-    print("Time taken : {} seconds".format(end - start))
-    
-    #meshPatches = [patch for patch in meshPatches if patch.isValid]
+    print("\nTime taken : {} seconds".format(end - start))
     
     print("Dumping into a binary file...")
     with lzma.open(patchesDataPath, 'wb') as f:
@@ -215,6 +232,8 @@ kdt = KDTree(topoFeatures,  leaf_size = 40, metric = 'euclidean')
 rankRecoverer = LowRankRecovery.LowRankRecovery()
 clusterSize = 20
 
+raise Exception("Prout")
+
 #Performing recovery on each patch
 newNormals = {}
 
@@ -247,7 +266,7 @@ for patchIdx in range(len(meshPatches)):
     avg = np.average(patchRecNormals, axis = 0) 
     newNormal = patch.eigenVecs @ (avg / np.linalg.norm(avg))
     
-    newNormals[patch.centerVertexIdx] = newNormal    
+    newNormals[patch.centerVertexIdx] = newNormal
 
     bar.next()
     
