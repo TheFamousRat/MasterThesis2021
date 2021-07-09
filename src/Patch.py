@@ -258,10 +258,10 @@ class Patch:
         for mat in selecObj.data.materials:
             nodeTree = mat.node_tree #shorthand
             #Reloading the dependent images for faster baking (0 idea why this works, but it does)
-            for node in nodeTree.nodes:
-                if node.type == 'TEX_IMAGE':
-                    node.image.pack()
-                    node.image.unpack()
+            #for node in nodeTree.nodes:
+            #    if node.type == 'TEX_IMAGE':
+            #        node.image.pack()
+            #        node.image.unpack()
             #Preparing the image node
             if not Patch.imageNodeName in mat.node_tree.nodes:
                 nodeTree.nodes.new("ShaderNodeTexImage").name = Patch.imageNodeName
