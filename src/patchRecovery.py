@@ -18,6 +18,7 @@ import ctypes
 #Scikit suite
 import numpy as np
 from sklearn.neighbors import KDTree
+from sklearn.decomposition import KernelPCA
 #Show progress bar utility
 from progress.bar import Bar
 #Deep difference for object instance matching
@@ -75,19 +76,43 @@ def intToSignedBitList(val, bitsAmount):
     """
     return [1-2*bool(val & (1<<j)) for j in range(bitsAmount)]
 
-def buildMeshPatches(patchBuilder):
-    #Preparing the building
-    meshPatches_ = [None] * len(patchBuilder.bmeshObj.verts)
-    poolData = [vert.index for vert in patchBuilder.bmeshObj.verts]
-    
-    #Multithreaded building
-    bar = Bar('Creating patches around vertices', max=len(poolData))
-    with ThreadPoolExecutor(max_workers = 4) as executor:
-        for res in executor.map(patchBuilder.createVertexPatch, poolData):
-            meshPatches_[res.centerVertexIdx] = res
+def bakeData(bakedDataPath, dataPoints, dataBakerFunc, dataBakerArgs = tuple()):
+    ret = []
+
+    #Checking if baked data is available and correct
+    if os.path.exists(bakedDataPath):
+        #Loading binary baked file
+        print("Baked file found in {}. Loading...".format(bakedDataPath))
+        with lzma.open(bakedDataPath, 'rb') as f:
+            ret = pickle.load(f)  
+        
+        #Checking equality between two patches for the same mesh
+        print("Checking integrity...")
+        patchBaked = ret[0]
+        patchRef = dataBakerFunc(dataPoints[0], *dataBakerArgs)
+        
+        if DeepDiff(patchRef, patchBaked) != {}:
+            print("Outdaded or invalid baked data found, rebaking")
+            ret = []
+        else:
+            print("Baked data integrity test successful")
+        
+    #Checking if the patchs were correctly loaded
+    if len(ret) == 0:
+        #Building the patches
+        totIters = len(dataPoints)
+        ret = [None] * totIters#buildMeshPatches(patchBuilder)
+        bar = Bar('Baking data', max=totIters)
+        for i in range(totIters):
+            ret[i] = dataBakerFunc(dataPoints[i], *dataBakerArgs)
             bar.next()
-            
-    return meshPatches_
+        
+        print("Dumping into a binary file...")
+        with lzma.open(bakedDataPath, 'wb') as f:
+            pickle.dump(ret, f)
+        print("Done")
+
+    return ret
 
 ###Body
 #Creating the bmesh
@@ -115,93 +140,60 @@ if not os.path.exists(meshDataPath):
 
 ##Covering the mesh with patches
 print("===BAKING START===")
-meshPatches = []
+print("-Patches building-")
 patchBuilder = PatchBuilder(bm)
-
-#Checking in patches were baked/are still up to date
 patchesDataPath = os.path.join(meshDataPath, 'patches.pkl')
-if os.path.exists(patchesDataPath):
-    #Loading binary baked patches file
-    print("Baked patches file found in {}. Loading...".format(patchesDataPath))
-    with lzma.open(patchesDataPath, 'rb') as f:
-        meshPatches = pickle.load(f)  
-    
-    #Checking equality between two patches for the same mesh
-    print("Checking integrity...")
-    patchBaked = meshPatches[0]
-    patchRef = patchBuilder.createVertexPatch(patchBaked.centerVertexIdx)
-    
-    if DeepDiff(patchRef, patchBaked) != {}:
-        print("Outdaded or invalid baked patches found, rebuilding all patches")
-        meshPatches = []
-    else:
-        print("Patch integrity test successful")
-    
-#Checking if the patchs were correctly loaded
-if len(meshPatches) == 0:
-    #Patches not found, baking them
-    print("Building patches for the mesh")
-    start = time.time()
-    
-    #Building the patches
-    meshPatches = buildMeshPatches(patchBuilder)
-    
-    end = time.time()
-    print("\nTime taken : {} seconds".format(end - start))
-    
-    print("Dumping into a binary file...")
-    with lzma.open(patchesDataPath, 'wb') as f:
-        pickle.dump(meshPatches, f)
-    print("Done")
+
+meshPatches = bakeData(patchesDataPath, list(range(len(bm.verts))), patchBuilder.createVertexPatch)
 
 #Loading sampled textures
-if False:
-    texturesInfos = []
-    Patch.Patch.setupBakingEnvironment(bm)
-    patchesTextureFilePath = os.path.join(meshDataPath, 'textures.pkl')
+print("-Textures sampling-")
+Patch.Patch.setupBakingEnvironment(bm)
+patchesTextureFilePath = os.path.join(meshDataPath, 'textures.pkl')
+texturesInfos = []
 
-    #Trying to load baked data (if it exists)
-    if os.path.exists(patchesTextureFilePath):
-        print("Baked textures file found in {}. Loading...".format(patchesTextureFilePath))
-        with lzma.open(patchesTextureFilePath, 'rb') as f:
-            texturesInfos = pickle.load(f) 
-        
-        print("Checking integrity...")
-        patchRefIdx = 0
-        (meshPatches[patchRefIdx]).bakePatchTexture(bm)
-        patchRef = np.array((meshPatches[patchRefIdx]).pixels)
-        patchBaked = np.array(texturesInfos[patchRefIdx])
-        
-        if DeepDiff(patchRef, patchBaked) != {}:
-            print("Outdaded or invalid baked textures found, rebaking all textures")
-            texturesInfos = []
-        else:
-            print("Patch integrity test successful")
+#Trying to load baked data (if it exists)
+if os.path.exists(patchesTextureFilePath):
+    print("Baked textures file found in {}. Loading...".format(patchesTextureFilePath))
+    with lzma.open(patchesTextureFilePath, 'rb') as f:
+        texturesInfos = pickle.load(f) 
+    
+    print("Checking integrity...")
+    patchRefIdx = 0
+    (meshPatches[patchRefIdx]).bakePatchTexture(bm)
+    patchRef = np.array((meshPatches[patchRefIdx]).pixels)
+    patchBaked = np.array(texturesInfos[patchRefIdx])
+    
+    if DeepDiff(patchRef, patchBaked) != {}:
+        print("Outdaded or invalid baked textures found, rebaking all textures")
+        texturesInfos = []
+    else:
+        print("Patch integrity test successful")
 
-    if len(texturesInfos) == 0:#Add here logic for checking whether the texture info of patches is correct
-        print("Setting up baking environment...")
+if len(texturesInfos) == 0:#Add here logic for checking whether the texture info of patches is correct
+    print("Setting up baking environment...")
 
-        print("Baking patch textures...")
+    print("Baking patch textures...")
 
-        bar = Bar('Extracting patch textures', max=len(meshPatches))
-        for i in range(len(meshPatches)):
-            patch = meshPatches[i]
-            print(patch.centerVertexIdx)
-            patch.bakePatchTexture(bm)
-            bar.next()
-            
-        texturesInfos = np.array([meshPatches[i].pixels for i in range(len(meshPatches))])
-        
-        print("Dumping into a binary file...")
-        with lzma.open(patchesTextureFilePath, 'wb') as f:
-            pickle.dump(texturesInfos, f)
-        print("Done")
-
-    print("Setting texture data...")
+    bar = Bar('Extracting patch textures', max=len(meshPatches))
     for i in range(len(meshPatches)):
         patch = meshPatches[i]
-        patch.pixels = texturesInfos[i]
+        print(patch.centerVertexIdx)
+        patch.bakePatchTexture(bm)
+        bar.next()
+        
+    texturesInfos = np.array([meshPatches[i].pixels for i in range(len(meshPatches))])
+    
+    print("Dumping into a binary file...")
+    with lzma.open(patchesTextureFilePath, 'wb') as f:
+        pickle.dump(texturesInfos, f)
     print("Done")
+
+print("Setting texture data...")
+for i in range(len(meshPatches)):
+    patch = meshPatches[i]
+    patch.pixels = texturesInfos[i]
+print("Done")
 
 
 #Loading image features
@@ -228,22 +220,11 @@ testlib.getDepressedCubicRoots.argtypes = (ctypes.c_float, ctypes.c_float, ctype
 def getPatchNormalColumnVector(patch):
     return np.concatenate(np.array([patch.sampledNormals[i] for i in range(Patch.Patch.sampleRes**2)]), axis = 0)
 
-#Building the feature vectors
-#Topological features
-topoFeatures = [patch.eigenVals / np.linalg.norm(patch.eigenVals) for patch in meshPatches]
+###Building the feature vectors
+##Topological features
+topoFeatures = np.array([patch.eigenVals / np.linalg.norm(patch.eigenVals) for patch in meshPatches])
 
-start = time.time()
-
-for patch in meshPatches:
-    patch.createCenteredUVMap(bm)
-
-end = time.time()
-print(end - start)
-
-Patch.Patch.setupBakingEnvironment(bm)
-meshPatches[0].bakePatchTexture(bm)
-
-#Extracting the image features
+##Extracting the image features
 if False:
     import tensorflow as tf
     from keras.applications import vgg16
@@ -262,21 +243,34 @@ if False:
     with tf.device('/gpu:0'):
         imageFeatures = model.predict(allPixels)
 
+    imageFeatures = KernelPCA(n_components = 10, kernel = 'rbf').fit_transform(imageFeatures)
+
     kdt = KDTree(imageFeatures,  leaf_size = 40, metric = 'euclidean')
-    patchIdx = 1637
+    patchIdx = 659
     dists, neighsIdx = kdt.query([imageFeatures[patchIdx]], k=20)
 
     for neighIdx in neighsIdx[0]:
         bm.verts[meshPatches[neighIdx].centerVertexIdx].select = True
 
-    #Building the KDtree
-    kdt = KDTree(topoFeatures,  leaf_size = 40, metric = 'euclidean')
-    rankRecoverer = LowRankRecovery.LowRankRecovery()
-    clusterSize = 20
+
+
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
+
+clustering = KMeans(n_clusters = 5).fit(topoFeatures)
+print(np.unique(clustering.labels_))
+for i in np.where(clustering.labels_ == 0)[0]:
+    bm.verts[meshPatches[i].centerVertexIdx].select = True
+
 
 raise Exception("Prout")
 
-#Performing recovery on each patch
+##Building the KDtree
+kdt = KDTree(topoFeatures,  leaf_size = 40, metric = 'euclidean')
+rankRecoverer = LowRankRecovery.LowRankRecovery()
+clusterSize = 20
+
+##Performing recovery on each patch
 newNormals = {}
 
 bar = Bar('Performing low-rank recovery', max=len(meshPatches))

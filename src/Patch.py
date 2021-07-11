@@ -62,9 +62,11 @@ class Patch:
 
         self.pixels = np.array([])
         
-        self.calculateIndicators(bmeshObj)
+        self.computeProperties(bmeshObj)
+        
+        self.createCenteredUVMap(bmeshObj)
 
-    def calculateIndicators(self, bmeshObj):
+    def computeProperties(self, bmeshObj):
         """
         Syntaxic sugar to (re-)calculate the geometric descriptors of the patch
         """
@@ -307,17 +309,17 @@ class Patch:
         for faceIdx in self.getFacesIdxIterator():
             bmeshObj.faces[faceIdx].select = False
 
-        verticesUVs = {vIdx : np.array(self.getVertUV(bmeshObj, vIdx, Patch.uvLayerName)) for vIdx in self.verticesIdxList}
+        self.verticesUVs = {vIdx : np.array(self.getVertUV(bmeshObj, vIdx, Patch.uvLayerName)) for vIdx in self.verticesIdxList}
 
         #Center the UVs (so that the central vertex is at pos (0.5,0.5)
         w = np.array([bmeshObj.faces[faceIdx].calc_area() for faceIdx in self.getFacesIdxIterator()])
-        facesUVBarycenters = [np.average([verticesUVs[vert.index] for vert in bmeshObj.faces[faceIdx].verts], axis = 0) for faceIdx in self.getFacesIdxIterator()]
+        facesUVBarycenters = [np.average([self.verticesUVs[vert.index] for vert in bmeshObj.faces[faceIdx].verts], axis = 0) for faceIdx in self.getFacesIdxIterator()]
         weightedBarycenter = np.average(facesUVBarycenters, axis = 0, weights = w)
         uvMapCenter = np.array([0.5, 0.5])
         posShift = uvMapCenter - weightedBarycenter
 
         for vIdx in self.verticesIdxList:
-            verticesUVs[vIdx] = verticesUVs[vIdx] + posShift
+            self.verticesUVs[vIdx] = self.verticesUVs[vIdx] + posShift
         
         ##Rotate the UVs to match local axis
         #Finding a ref
@@ -334,7 +336,7 @@ class Patch:
         angleWorld = math.atan2(projCoords[1], projCoords[0])
 
         #xAxis in the UV map
-        refVecUV = np.matrix(verticesUVs[refVertIdx]).T
+        refVecUV = np.matrix(self.verticesUVs[refVertIdx]).T
         centerVec = np.matrix(uvMapCenter).T
         centeredRefUV = refVecUV - centerVec
         angleUV = math.atan2(centeredRefUV[1], centeredRefUV[0])
@@ -345,15 +347,15 @@ class Patch:
         
         #Rotate around the central vec
         for vIdx in self.verticesIdxList:
-            verticesUVs[vIdx] = (rotMat @ (np.matrix(verticesUVs[vIdx]).T - centerVec)) + centerVec
+            self.verticesUVs[vIdx] = (rotMat @ (np.matrix(self.verticesUVs[vIdx]).T - centerVec)) + centerVec
 
-        #Update actual vertices positions
+    def applyUVMap(self, bmeshObj):
         for vIdx in self.verticesIdxList:
-            self.setVertUV(bmeshObj, vIdx, Patch.uvLayerName, verticesUVs[vIdx])
+            self.setVertUV(bmeshObj, vIdx, Patch.uvLayerName, self.verticesUVs[vIdx])
 
     def bakePatchTexture(self, bmeshObj):
         #Extracting the UV map
-        self.createCenteredUVMap(bmeshObj)
+        self.applyUVMap(bmeshObj)
         
         #Bake
         bpy.ops.object.bake(type='DIFFUSE', pass_filter = {'COLOR'}, use_clear = True, margin = Patch.textureMargin)#
