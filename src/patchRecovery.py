@@ -155,52 +155,57 @@ if len(meshPatches) == 0:
     print("Done")
 
 #Loading sampled textures
-texturesInfos = []
-Patch.Patch.setupBakingEnvironment(bm)
-patchesTextureFilePath = os.path.join(meshDataPath, 'textures.pkl')
+if False:
+    texturesInfos = []
+    Patch.Patch.setupBakingEnvironment(bm)
+    patchesTextureFilePath = os.path.join(meshDataPath, 'textures.pkl')
 
-#Trying to load baked data (if it exists)
-if os.path.exists(patchesTextureFilePath):
-    print("Baked textures file found in {}. Loading...".format(patchesTextureFilePath))
-    with lzma.open(patchesTextureFilePath, 'rb') as f:
-        texturesInfos = pickle.load(f) 
-    
-    print("Checking integrity...")
-    patchRefIdx = 0
-    (meshPatches[patchRefIdx]).bakePatchTexture(bm)
-    patchRef = np.array((meshPatches[patchRefIdx]).pixels)
-    patchBaked = np.array(texturesInfos[patchRefIdx])
-    
-    if DeepDiff(patchRef, patchBaked) != {}:
-        print("Outdaded or invalid baked textures found, rebaking all textures")
-        texturesInfos = []
-    else:
-        print("Patch integrity test successful")
+    #Trying to load baked data (if it exists)
+    if os.path.exists(patchesTextureFilePath):
+        print("Baked textures file found in {}. Loading...".format(patchesTextureFilePath))
+        with lzma.open(patchesTextureFilePath, 'rb') as f:
+            texturesInfos = pickle.load(f) 
+        
+        print("Checking integrity...")
+        patchRefIdx = 0
+        (meshPatches[patchRefIdx]).bakePatchTexture(bm)
+        patchRef = np.array((meshPatches[patchRefIdx]).pixels)
+        patchBaked = np.array(texturesInfos[patchRefIdx])
+        
+        if DeepDiff(patchRef, patchBaked) != {}:
+            print("Outdaded or invalid baked textures found, rebaking all textures")
+            texturesInfos = []
+        else:
+            print("Patch integrity test successful")
 
-if len(texturesInfos) == 0:#Add here logic for checking whether the texture info of patches is correct
-    print("Setting up baking environment...")
+    if len(texturesInfos) == 0:#Add here logic for checking whether the texture info of patches is correct
+        print("Setting up baking environment...")
 
-    print("Baking patch textures...")
+        print("Baking patch textures...")
 
-    bar = Bar('Extracting patch textures', max=len(meshPatches))
+        bar = Bar('Extracting patch textures', max=len(meshPatches))
+        for i in range(len(meshPatches)):
+            patch = meshPatches[i]
+            print(patch.centerVertexIdx)
+            patch.bakePatchTexture(bm)
+            bar.next()
+            
+        texturesInfos = np.array([meshPatches[i].pixels for i in range(len(meshPatches))])
+        
+        print("Dumping into a binary file...")
+        with lzma.open(patchesTextureFilePath, 'wb') as f:
+            pickle.dump(texturesInfos, f)
+        print("Done")
+
+    print("Setting texture data...")
     for i in range(len(meshPatches)):
         patch = meshPatches[i]
-        print(patch.centerVertexIdx)
-        patch.bakePatchTexture(bm)
-        bar.next()
-        
-    texturesInfos = np.array([meshPatches[i].pixels for i in range(len(meshPatches))])
-    
-    print("Dumping into a binary file...")
-    with lzma.open(patchesTextureFilePath, 'wb') as f:
-        pickle.dump(texturesInfos, f)
+        patch.pixels = texturesInfos[i]
     print("Done")
 
-print("Setting texture data...")
-for i in range(len(meshPatches)):
-    patch = meshPatches[i]
-    patch.pixels = texturesInfos[i]
-print("Done")
+
+#Loading image features
+
 
 #Rest of the logic
 print("===LOGIC START===")
@@ -227,37 +232,49 @@ def getPatchNormalColumnVector(patch):
 #Topological features
 topoFeatures = [patch.eigenVals / np.linalg.norm(patch.eigenVals) for patch in meshPatches]
 
-#Extracting the image features
-import tensorflow as tf
-from keras.applications import vgg16
-from PIL import Image
-
-#Downloading (or loading) the pre-trained models
-import ssl
-ssl._create_default_https_context = ssl._create_unverified_context
-
-model = vgg16.VGG16(weights='imagenet', include_top=False, input_shape=(64, 64, 3), pooling="max")
-
 start = time.time()
 
-formattedPatchPixels = [np.delete(patch.pixels.reshape([1, 64, 64, 4]), 3, 3) for patch in meshPatches]
-
-allPixels = np.concatenate(formattedPatchPixels)
-allPixels = tf.convert_to_tensor(allPixels, dtype = tf.float32)
-allPixels = ((allPixels / 255.0) * 2.0) - 1.0
-
-with tf.device('/gpu:0'):
-    model.predict(allPixels)
+for patch in meshPatches:
+    patch.createCenteredUVMap(bm)
 
 end = time.time()
 print(end - start)
 
-raise Exception("Prout")
+Patch.Patch.setupBakingEnvironment(bm)
+meshPatches[0].bakePatchTexture(bm)
 
-#Building the KDtree
-kdt = KDTree(topoFeatures,  leaf_size = 40, metric = 'euclidean')
-rankRecoverer = LowRankRecovery.LowRankRecovery()
-clusterSize = 20
+#Extracting the image features
+if False:
+    import tensorflow as tf
+    from keras.applications import vgg16
+    import ssl
+
+    ssl._create_default_https_context = ssl._create_unverified_context
+    model = vgg16.VGG16(weights='imagenet', include_top=False, input_shape=(64, 64, 3), pooling="max")
+
+    formattedPatchPixels = [np.delete(patch.pixels.reshape([1, 64, 64, 4]), 3, 3) for patch in meshPatches]
+
+    allPixels = np.concatenate(formattedPatchPixels)
+    allPixels = tf.convert_to_tensor(allPixels, dtype = tf.float32)
+    allPixels = ((allPixels / 255.0) * 2.0) - 1.0
+
+    imageFeatures = []
+    with tf.device('/gpu:0'):
+        imageFeatures = model.predict(allPixels)
+
+    kdt = KDTree(imageFeatures,  leaf_size = 40, metric = 'euclidean')
+    patchIdx = 1637
+    dists, neighsIdx = kdt.query([imageFeatures[patchIdx]], k=20)
+
+    for neighIdx in neighsIdx[0]:
+        bm.verts[meshPatches[neighIdx].centerVertexIdx].select = True
+
+    #Building the KDtree
+    kdt = KDTree(topoFeatures,  leaf_size = 40, metric = 'euclidean')
+    rankRecoverer = LowRankRecovery.LowRankRecovery()
+    clusterSize = 20
+
+raise Exception("Prout")
 
 #Performing recovery on each patch
 newNormals = {}
