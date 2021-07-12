@@ -225,39 +225,30 @@ def getPatchNormalColumnVector(patch):
 topoFeatures = np.array([patch.eigenVals / np.linalg.norm(patch.eigenVals) for patch in meshPatches])
 
 ##Extracting the image features
-if False:
-    import tensorflow as tf
-    from keras.applications import vgg16
-    import ssl
+import tensorflow as tf
+from tensorflow.keras.applications import VGG16
+import ssl
 
-    ssl._create_default_https_context = ssl._create_unverified_context
-    model = vgg16.VGG16(weights='imagenet', include_top=False, input_shape=(64, 64, 3), pooling="max")
+ssl._create_default_https_context = ssl._create_unverified_context
+model = VGG16(weights='imagenet', include_top=False, input_shape=(64, 64, 3), pooling="max")
 
-    formattedPatchPixels = [np.delete(patch.pixels.reshape([1, 64, 64, 4]), 3, 3) for patch in meshPatches]
+formattedPatchPixels = [np.delete(patch.pixels.reshape([1, 64, 64, 4]), 3, 3) for patch in meshPatches]
 
-    allPixels = np.concatenate(formattedPatchPixels)
-    allPixels = tf.convert_to_tensor(allPixels, dtype = tf.float32)
-    allPixels = ((allPixels / 255.0) * 2.0) - 1.0
+allPixels = np.concatenate(formattedPatchPixels)
+allPixels = tf.convert_to_tensor(allPixels, dtype = tf.float32)
+allPixels = ((allPixels / 255.0) * 2.0) - 1.0
 
-    imageFeatures = []
-    with tf.device('/gpu:0'):
-        imageFeatures = model.predict(allPixels)
+imageFeatures = []
+with tf.device('/gpu:0'):
+    imageFeatures = model.predict(allPixels)
 
-    imageFeatures = KernelPCA(n_components = 10, kernel = 'rbf').fit_transform(imageFeatures)
-
-    kdt = KDTree(imageFeatures,  leaf_size = 40, metric = 'euclidean')
-    patchIdx = 659
-    dists, neighsIdx = kdt.query([imageFeatures[patchIdx]], k=20)
-
-    for neighIdx in neighsIdx[0]:
-        bm.verts[meshPatches[neighIdx].centerVertexIdx].select = True
-
+imageFeatures = KernelPCA(n_components = 10, kernel = 'rbf').fit_transform(imageFeatures)
 
 
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 
-clustering = KMeans(n_clusters = 5).fit(topoFeatures)
+clustering = KMeans(n_clusters = 5).fit(imageFeatures)
 print(np.unique(clustering.labels_))
 for i in np.where(clustering.labels_ == 0)[0]:
     bm.verts[meshPatches[i].centerVertexIdx].select = True
