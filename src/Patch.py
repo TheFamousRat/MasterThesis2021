@@ -63,8 +63,6 @@ class Patch:
         self.pixels = np.array([])
         
         self.computeProperties(bmeshObj)
-        
-        self.createCenteredUVMap(bmeshObj)
 
     def computeProperties(self, bmeshObj):
         """
@@ -349,6 +347,15 @@ class Patch:
         for vIdx in self.verticesIdxList:
             self.verticesUVs[vIdx] = (rotMat @ (np.matrix(self.verticesUVs[vIdx]).T - centerVec)) + centerVec
 
+    def computeUVMapSurface(self, bmeshObj):
+        area = 0.0
+        
+        for faceIdx in self.getFacesIdxIterator():
+            faceVertsIdx = [vert.index for vert in bmeshObj.faces[faceIdx].verts]
+            area += np.linalg.norm(np.cross((self.verticesUVs[faceVertsIdx[0]] - self.verticesUVs[faceVertsIdx[1]]).T, (self.verticesUVs[faceVertsIdx[0]] - self.verticesUVs[faceVertsIdx[2]]).T))/2.0
+        
+        return area
+
     def applyUVMap(self, bmeshObj):
         for vIdx in self.verticesIdxList:
             self.setVertUV(bmeshObj, vIdx, Patch.uvLayerName, self.verticesUVs[vIdx])
@@ -369,12 +376,7 @@ class Patch:
             for loop in vert.link_loops:
                 loop[bmeshObj.loops.layers.uv[Patch.uvLayerName]].uv = Patch.uvExclusionPoint
 
-    #Setting up C++ functions
-    testlib = ctypes.CDLL('/home/home/thefamousrat/Documents/KU Leuven/Master Thesis/MasterThesis2021/src/c_utils/libutils.so')
-    testlib.getClosestFaceFromRay.argtypes = (ctypes.POINTER(ctypes.c_double), ctypes.c_uint, ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double))
-    testlib.getClosestFaceFromRay.restype = ctypes.c_int
-
-    def samplePatchNormals(self, bmeshObj):
+    def getNormalSamplesPosition(self, bmeshObj):
         planeOrigin = np.array(bmeshObj.verts[self.centerVertexIdx].co)
         v1 = self.eigenVecs[:,0]
         v2 = self.eigenVecs[:,1]
@@ -382,10 +384,24 @@ class Patch:
         #Finding the scale of the plane according to the largest edge length
         planeScale = 2.0 * self.maxEdgeLen
         
-        ##Setting constants for the sampling
-        #Python
         scaleFac = planeScale / Patch.sampleRes
         centerFac = (Patch.sampleRes - 1)/2.0
+
+        ret = [None] * Patch.sampleRes**2
+        for y in range(Patch.sampleRes):
+            for x in range(Patch.sampleRes):
+                ret[x + y * Patch.sampleRes] = planeOrigin + scaleFac * (v1 * (x - centerFac) + v2 * (y - centerFac))
+
+        return ret
+
+    #Setting up C++ functions
+    testlib = ctypes.CDLL('/home/home/thefamousrat/Documents/KU Leuven/Master Thesis/MasterThesis2021/src/c_utils/libutils.so')
+    testlib.getClosestFaceFromRay.argtypes = (ctypes.POINTER(ctypes.c_double), ctypes.c_uint, ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double))
+    testlib.getClosestFaceFromRay.restype = ctypes.c_int
+
+    def samplePatchNormals(self, bmeshObj):
+        ##Setting constants for the sampling
+        #Python
         faceIndices = [faceIdx for faceIdx in self.getFacesIdxIterator()]
         #C++
         samplePlaneNormal = -self.eigenVecs[:,2]
@@ -395,16 +411,20 @@ class Patch:
         facePointsCount = len(faceIndices)
 
         #Sampling
+        samplePos = self.getNormalSamplesPosition(bmeshObj)
         self.sampledNormals = [np.zeros((3,1)) for i in range(Patch.sampleRes**2)]
         for y in range(Patch.sampleRes):
             for x in range(Patch.sampleRes):
-                sampleCoords = planeOrigin + scaleFac * (v1 * (x - centerFac) + v2 * (y - centerFac))
+                sampleCoords = samplePos[x + y * Patch.sampleRes]
                 sampleCoords_ptr = sampleCoords.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
                 
                 faceIdxPos = Patch.testlib.getClosestFaceFromRay(facePoints_ptr, facePointsCount, sampleCoords_ptr, samplePlaneNormal_ptr)
                 faceIdx = faceIndices[faceIdxPos]
 
                 self.sampledNormals[x + y * Patch.sampleRes] = self.rotMatInv @ np.array(bmeshObj.faces[faceIdx].normal)
+        
+        self.sampledNormals = np.array(self.sampledNormals)
+
     
     defaultAxisColors = ["ff0000", "00ff00", "0000ff"]
     def drawLRF(self, gpencil, gp_frame, bmeshObj, lineSize = 0.02, startThck = 0.5, endThck = 3.0, drawAxis = (True, True, True), axisColors = defaultAxisColors):
@@ -421,30 +441,9 @@ class Patch:
         """
         Draws in a grease pencil canvas the plane used to sample the normals 
         """
-        planeOrigin = np.array(bmeshObj.verts[self.centerVertexIdx].co)
-        v1 = self.eigenVecs[:,0]
-        v2 = self.eigenVecs[:,1]
-        
-        #Finding the scale of the plane according to the largest edge length
-        maxEdgeLen = 0.0
-        for edgeIdx in self.getEdgesIdx(bmeshObj):
-            maxEdgeLen = max(maxEdgeLen, bmeshObj.edges[edgeIdx].calc_length())
-        planeScale = 2.0 * maxEdgeLen
-        
-        #Setting constants for the sampling
-        scaleFac = planeScale / Patch.sampleRes
-        centerFac = (Patch.sampleRes - 1)/2.0
-        
-        #Drawing the frame
-        points = [v1 + v2, v1 - v2, -(v1 + v2), v2 - v1]
-        for i in range(4):
-            p0 = planeOrigin + 0.5 * planeScale * points[i]
-            p1 = planeOrigin + 0.5 * planeScale * points[(i+1)%4]
-            debugDrawing.draw_line(gpencil, gp_frame, (p0, p1), (frameThck, frameThck), color)
-
-        #Sampling
+        samplePos = self.getNormalSamplesPosition(bmeshObj)
+        self.sampledNormals = [np.zeros((3,1)) for i in range(Patch.sampleRes**2)]
         for y in range(Patch.sampleRes):
             for x in range(Patch.sampleRes):
-                sampleCoords = planeOrigin + scaleFac * (v1 * (x - centerFac) + v2 * (y - centerFac))
+                sampleCoords = samplePos[x + y * Patch.sampleRes]
                 debugDrawing.draw_line(gpencil, gp_frame, (sampleCoords, sampleCoords), (sampleThck, sampleThck), color)
-    

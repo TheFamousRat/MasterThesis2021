@@ -1,21 +1,37 @@
-import numpy as np
-import ctypes
-import time
+import os
+import pickle, lzma
 
-testlib = ctypes.CDLL('/home/home/thefamousrat/Documents/KU Leuven/Master Thesis/MasterThesis2021/src/c_utils/libutils.so')
-testlib.getDepressedCubicRoots.argtypes = (ctypes.c_float, ctypes.c_float, ctypes.POINTER(ctypes.c_float))
+from scipy.sparse import data
 
-arr = (ctypes.c_float*3)()
+def retrieveBakedData(bakedDataPath, integrityCheckFunction, sourceDataIdx, dataBakingFunction):
+    """
+    
+    
+    """
+    if os.path.exists(bakedDataPath):
+        retrievedData = []
+        print("Baked textures file found in {}. Loading...".format(bakedDataPath))
+        with lzma.open(bakedDataPath, 'rb') as f:
+            retrievedData = pickle.load(f) 
+        
+        print("Checking integrity...")
+        refIdx = 0
+        integrityCheckSuccess = integrityCheckFunction(refIdx, retrievedData[refIdx])
+        
+        if integrityCheckSuccess:
+            print("Patch integrity test successful")
+            return retrievedData
+        else:
+            print("Outdaded or invalid baked textures found, rebaking all textures")
+            bakedData = [None] * len(sourceDataIdx)
+            print("Baking patch textures...")
 
-p = -539.3279613200449
-q = 0.5
-
-start = time.time()
-
-testlib.getDepressedCubicRoots(p, q, arr)
-print("Roots : ", [x for x in arr])
-print([x**3 + p * x + q for x in arr])
-
-end = time.time()
-
-print(end - start)
+            bar = Bar('Extracting patch textures', max=len(sourceDataIdx))
+            for dataIdx in sourceDataIdx:
+                bakedData[dataIdx] = dataBakingFunction(dataIdx)
+                bar.next()
+            
+            print("Dumping into a binary file...")
+            with lzma.open(bakedDataPath, 'wb') as f:
+                pickle.dump(bakedData, f)
+            print("Done")

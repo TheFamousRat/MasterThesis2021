@@ -111,11 +111,11 @@ int _getClosestFaceFromRay(double* facePointsArr, unsigned int faceCount, double
         Vector3f v0(facePointsArr[faceCoordsStart], facePointsArr[faceCoordsStart + 1], facePointsArr[faceCoordsStart + 2]);
         Vector3f v1(facePointsArr[faceCoordsStart + 3], facePointsArr[faceCoordsStart + 4], facePointsArr[faceCoordsStart + 5]);
         Vector3f v2(facePointsArr[faceCoordsStart + 6], facePointsArr[faceCoordsStart + 7], facePointsArr[faceCoordsStart + 8]);
-        Vector3f triNorm = (v1 - v0).cross(v2 - v0);
+        Vector3f faceNormal = (v1 - v0).cross(v2 - v0); //The normal of the triangle
 
-        float dot_rayNormal = rayDir.dot(triNorm);
+        float dot_rayNormal = rayDir.dot(faceNormal);
         if (dot_rayNormal != 0.0f) {
-            float dist = std::abs(triNorm.dot(rayOrig - v0));
+            float dist = std::abs(faceNormal.dot(rayOrig - v0)/dot_rayNormal);
 
             if (dist < smallestDist) {
                 faceIdxPos = i;
