@@ -90,6 +90,9 @@ class Patch:
         self.barycenter = np.average([np.array(bmeshObj.verts[vertexIdx].co) for vertexIdx in self.verticesIdxList], axis = 0) 
 
     def calculateFaceWeights(self, bmeshObj):
+        """
+        Calculates weights for each face, based on the face's relative distance to the patch's center and on faces' areas
+        """
         faceWeights = {}
 
         #Computing some constant values for tensor voting
@@ -114,6 +117,9 @@ class Patch:
         return faceWeights
 
     def calculatePatchEigenValues(self, bmeshObj):
+        """
+        Calculates the LRF and the eigenvalues of the patch's tensor
+        """
         #Extracting the eigenvalues from the patch's normals' correlation matrix. Used to compare patches between each other
         faceWeights = self.calculateFaceWeights(bmeshObj)
         normalsCovMat = np.zeros((3,3))
@@ -186,28 +192,23 @@ class Patch:
         return ret
 
     def getCentralPos(self, bmeshObj):
+        """
+        Returns the position of the patch's central vertex, in model space
+        """
         return np.array(bmeshObj.verts[self.centerVertexIdx].co)
 
     def getFaceBarycenter(self, face):
+        """
+        Returns the barycenter of a given face, in model space
+        """
         return np.array(face.calc_center_median())
 
     def calculateFaceNormal(self, face):
+        """
+        Calculate the normal of a face using cross product
+        """
         n = np.cross(face.verts[0].co - face.verts[1].co, face.verts[1].co - face.verts[2].co)
         return n / np.linalg.norm(n)
-
-    def computeCurvatureTensor(self, bmeshObj):
-        curvatureTensor = np.zeros((3,3))
-        edgesSet = self.getEdgesIdx(bmeshObj)
-
-        for edgeIdx in edgesSet:
-            edge = bmeshObj.edges[edgeIdx]
-            edgeDir = np.array(edge.verts[0].co - edge.verts[1].co)
-            edgeDir = np.matrix(edgeDir / np.linalg.norm(edgeDir)).T
-            curvatureTensor += edge.calc_length() * edge.calc_face_angle_signed() * (edgeDir @ edgeDir.T)
-
-        curvatureTensor /= self.totalArea
-
-        return curvatureTensor
 
     def getVertUV(self, bmeshObj, vertIdx, uvLayerName):
         """
@@ -232,6 +233,9 @@ class Patch:
 
     @staticmethod
     def setupBakingEnvironment(bmeshObj):
+        """
+        Setting up global Blender variables to prepare for texture baking
+        """
         prevRenderEngine = bpy.context.scene.render.engine
         bpy.context.scene.render.engine = 'CYCLES'
 
@@ -285,6 +289,9 @@ class Patch:
                 loop[bmeshObj.loops.layers.uv[Patch.uvLayerName]].uv = Patch.uvExclusionPoint
 
     def createCenteredUVMap(self, bmeshObj):
+        """
+        UV unwrapping the patch
+        """
         selecObj = bpy.context.active_object
         #Creating a temporary UV layer
         if not Patch.uvLayerName in selecObj.data.uv_layers:
@@ -348,8 +355,12 @@ class Patch:
             self.verticesUVs[vIdx] = (rotMat @ (np.matrix(self.verticesUVs[vIdx]).T - centerVec)) + centerVec
 
     def computeUVMapSurface(self, bmeshObj):
+        """
+        Calculates the surface area of the UV map
+        """
         area = 0.0
         
+        #Summing the triangle area of each triangle's UV projection
         for faceIdx in self.getFacesIdxIterator():
             faceVertsIdx = [vert.index for vert in bmeshObj.faces[faceIdx].verts]
             area += np.linalg.norm(np.cross((self.verticesUVs[faceVertsIdx[0]] - self.verticesUVs[faceVertsIdx[1]]).T, (self.verticesUVs[faceVertsIdx[0]] - self.verticesUVs[faceVertsIdx[2]]).T))/2.0
@@ -361,6 +372,9 @@ class Patch:
             self.setVertUV(bmeshObj, vIdx, Patch.uvLayerName, self.verticesUVs[vIdx])
 
     def bakePatchTexture(self, bmeshObj):
+        """
+        Extracts an image texture associated with the patch's location of the mesh
+        """
         #Extracting the UV map
         self.applyUVMap(bmeshObj)
         
@@ -377,6 +391,9 @@ class Patch:
                 loop[bmeshObj.loops.layers.uv[Patch.uvLayerName]].uv = Patch.uvExclusionPoint
 
     def getNormalSamplesPosition(self, bmeshObj):
+        """
+        Produces a list of position corresponding to samples' origins in the model space
+        """
         planeOrigin = np.array(bmeshObj.verts[self.centerVertexIdx].co)
         v1 = self.eigenVecs[:,0]
         v2 = self.eigenVecs[:,1]
@@ -400,6 +417,9 @@ class Patch:
     testlib.getClosestFaceFromRay.restype = ctypes.c_int
 
     def samplePatchNormals(self, bmeshObj):
+        """
+        Produces a regularly sampled map of the patch's normals
+        """
         ##Setting constants for the sampling
         #Python
         faceIndices = [faceIdx for faceIdx in self.getFacesIdxIterator()]

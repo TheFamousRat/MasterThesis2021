@@ -195,12 +195,8 @@ for i in range(len(meshPatches)):
     patch.pixels = texturesInfos[i]
 print("Done")
 
-bpy.data.images['bakedImage'].pixels = list(meshPatches[824].pixels[:])
-raise Exception("Prout")
-
 #Rest of the logic
 print("===LOGIC START===")
-
 
 ##Low rank recovery
 testlib = ctypes.CDLL('/home/home/thefamousrat/Documents/KU Leuven/Master Thesis/MasterThesis2021/src/c_utils/libutils.so')
@@ -214,8 +210,8 @@ def getPatchNormalColumnVector(patch):
 ##Topological features
 topoFeatures = np.array([patch.eigenVals / np.linalg.norm(patch.eigenVals) for patch in meshPatches])
 
+##Extracting the image features
 if False:
-    ##Extracting the image features
     import tensorflow as tf
     from tensorflow.keras.applications import VGG16
     import ssl
@@ -236,21 +232,23 @@ if False:
     imageFeatures = KernelPCA(n_components = 10, kernel = 'rbf').fit_transform(imageFeatures)
 
 
-    from sklearn.cluster import KMeans
-    from sklearn.metrics import silhouette_score
-
-    clustering = KMeans(n_clusters = 5).fit(imageFeatures)
-    print(np.unique(clustering.labels_))
-    for i in np.where(clustering.labels_ == 0)[0]:
-        bm.verts[meshPatches[i].centerVertexIdx].select = True
-
-
 ##Building the KDtree
+kdt = KDTree(topoFeatures, leaf_size = 80, metric = 'euclidean')
+clusterSize = 80
+
+patchIdx = 0
+dists, neighIdx = kdt.query([topoFeatures[patchIdx]], k=clusterSize)
+print(neighIdx)
+
+raise Exception("prout")
+
+
+
+##Performing recovery on each patch
 kdt = KDTree(topoFeatures,  leaf_size = 40, metric = 'euclidean')
 rankRecoverer = LowRankRecovery.LowRankRecovery()
 clusterSize = 40
 
-##Performing recovery on each patch
 newNormals = {}
 
 bar = Bar('Performing low-rank recovery', max=len(meshPatches))
