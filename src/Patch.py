@@ -25,6 +25,8 @@ class Patch:
     #Related to patch sampling
     planeScale = 0.05
     sampleRes = 8
+    samplesCount = sampleRes**2
+    centerPatchIdx = (samplesCount // 2) + 1 if ((sampleRes%2) != 0) else ((sampleRes*(sampleRes - 1))//2) + np.array([-1,0,sampleRes-1,sampleRes])
 
     def __init__(self, bmeshObj, centerVertexIdx, ringsNum):
         #Creates a patch, built from a central vertex and its ringsNum neighbouring rings
@@ -400,7 +402,7 @@ class Patch:
         scaleFac = planeScale / Patch.sampleRes
         centerFac = (Patch.sampleRes - 1)/2.0
 
-        ret = [None] * Patch.sampleRes**2
+        ret = [None] * Patch.samplesCount
         for y in range(Patch.sampleRes):
             for x in range(Patch.sampleRes):
                 ret[x + y * Patch.sampleRes] = planeOrigin + scaleFac * (v1 * (x - centerFac) + v2 * (y - centerFac))
@@ -428,7 +430,7 @@ class Patch:
 
         #Sampling
         samplePos = self.getNormalSamplesPosition(bmeshObj)
-        self.sampledNormals = [np.zeros((3,1)) for i in range(Patch.sampleRes**2)]
+        self.sampledNormals = [np.zeros((3,1)) for i in range(Patch.samplesCount)]
         for y in range(Patch.sampleRes):
             for x in range(Patch.sampleRes):
                 sampleCoords = samplePos[x + y * Patch.sampleRes]
@@ -459,7 +461,7 @@ class Patch:
         """
         samplePos = self.getNormalSamplesPosition(bmeshObj)
 
-        self.sampledNormals = [np.zeros((3,1)) for i in range(Patch.sampleRes**2)]
+        self.sampledNormals = [np.zeros((3,1)) for i in range(Patch.samplesCount)]
         for y in range(Patch.sampleRes):
             for x in range(Patch.sampleRes):
                 sampleCoords = samplePos[x + y * Patch.sampleRes]
