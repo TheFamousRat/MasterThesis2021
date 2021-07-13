@@ -151,7 +151,7 @@ def checkUVMapIntegrity(patchIdx, bakedUVMap):
     patchRef = meshPatches[patchIdx]
     patchRef.createCenteredUVMap(bm)
     
-    return DeepDiff(patchRef.verticesUVs, bakedUVMap) == {}
+    return pickle.dumps(patchRef.verticesUVs) == pickle.dumps(bakedUVMap)
 
 def bakeUVMap(patchIdx):
     patch = meshPatches[patchIdx]
@@ -195,13 +195,14 @@ for i in range(len(meshPatches)):
     patch.pixels = texturesInfos[i]
 print("Done")
 
+meshPatches[1893].applyUVMap(bm)
+
 #Rest of the logic
 print("===LOGIC START===")
 
-##Low rank recovery
-testlib = ctypes.CDLL('/home/home/thefamousrat/Documents/KU Leuven/Master Thesis/MasterThesis2021/src/c_utils/libutils.so')
-testlib.getDepressedCubicRoots.argtypes = (ctypes.c_float, ctypes.c_float, ctypes.POINTER(ctypes.c_float))
+raise Exception("Prout")
 
+##Low rank recovery
 #Building a KD-tree to find the k nearest neighbours of any point
 def getPatchNormalColumnVector(patch):
     return np.concatenate(np.array([patch.sampledNormals[i] for i in range(Patch.Patch.sampleRes**2)]), axis = 0)
@@ -211,37 +212,47 @@ def getPatchNormalColumnVector(patch):
 topoFeatures = np.array([patch.eigenVals / np.linalg.norm(patch.eigenVals) for patch in meshPatches])
 
 ##Extracting the image features
-if False:
-    import tensorflow as tf
-    from tensorflow.keras.applications import VGG16
-    import ssl
+import tensorflow as tf
+from tensorflow.keras.applications import VGG16
+import ssl
 
-    ssl._create_default_https_context = ssl._create_unverified_context
-    model = VGG16(weights='imagenet', include_top=False, input_shape=(64, 64, 3), pooling="max")
+ssl._create_default_https_context = ssl._create_unverified_context
+model = VGG16(weights='imagenet', include_top=False, input_shape=(64, 64, 3), pooling="max")
 
-    formattedPatchPixels = [np.delete(patch.pixels.reshape([1, 64, 64, 4]), 3, 3) for patch in meshPatches]
+formattedPatchPixels = [np.delete(patch.pixels.reshape([1, 64, 64, 4]), 3, 3) for patch in meshPatches]
 
-    allPixels = np.concatenate(formattedPatchPixels)
-    allPixels = tf.convert_to_tensor(allPixels, dtype = tf.float32)
-    allPixels = ((allPixels / 255.0) * 2.0) - 1.0
+allPixels = np.concatenate(formattedPatchPixels)
+allPixels = tf.convert_to_tensor(allPixels, dtype = tf.float32)
+allPixels = ((allPixels / 255.0) * 2.0) - 1.0
 
-    imageFeatures = []
-    with tf.device('/gpu:0'):
-        imageFeatures = model.predict(allPixels)
+imageFeatures = []
+with tf.device('/gpu:0'):
+    imageFeatures = model.predict(allPixels)
 
-    imageFeatures = KernelPCA(n_components = 10, kernel = 'rbf').fit_transform(imageFeatures)
+imageFeatures = KernelPCA(n_components = 10, kernel = 'rbf').fit_transform(imageFeatures)
 
 
 ##Building the KDtree
-kdt = KDTree(topoFeatures, leaf_size = 80, metric = 'euclidean')
-clusterSize = 80
+clusterSize1 = 100
+clusterSize2 = 30
 
-patchIdx = 0
-dists, neighIdx = kdt.query([topoFeatures[patchIdx]], k=clusterSize)
-print(neighIdx)
+patchIdx = 589
+
+#First filtering : taking closest geometric patches
+kdt1 = KDTree(topoFeatures, leaf_size = clusterSize1, metric = 'euclidean')
+dists, neighIdx = kdt1.query([topoFeatures[patchIdx]], k=clusterSize1)
+topoNeighIdx = neighIdx[0]
+
+#Second one : of the previous neighbours, take the ones closest in terms of texture features
+kdt2 = KDTree(imageFeatures[topoNeighIdx], leaf_size = clusterSize2, metric = 'euclidean')
+dists, neighIdx = kdt2.query([imageFeatures[patchIdx]], k=clusterSize2)
+
+#Select them (illustration)
+for pIdx in topoNeighIdx[neighIdx[0]]:
+    bm.verts[meshPatches[pIdx].centerVertexIdx].select = True
+
 
 raise Exception("prout")
-
 
 
 ##Performing recovery on each patch

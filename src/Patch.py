@@ -80,11 +80,7 @@ class Patch:
         self.totalArea = np.sum([bmeshObj.faces[faceIdx].calc_area() for faceIdx in self.getFacesIdxIterator()])
 
         #Max edge length
-        self.maxEdgeLen = np.amax([bmeshObj.edges[edgeIdx].calc_length() for edgeIdx in self.getEdgesIdx(bmeshObj)])
-
-        #if math.pi * (len(self.rings) * self.maxEdgeLen * 0.5)**2 > self.totalArea:
-        #    self.isValid = False
-        #    raise PatchBuildingError("Empty patch rings")
+        self.avgEdgeLen = np.average([bmeshObj.edges[edgeIdx].calc_length() for edgeIdx in self.getEdgesIdx(bmeshObj)])
 
         #Barycenter (unweighted average of vertices)
         self.barycenter = np.average([np.array(bmeshObj.verts[vertexIdx].co) for vertexIdx in self.verticesIdxList], axis = 0) 
@@ -399,7 +395,7 @@ class Patch:
         v2 = self.eigenVecs[:,1]
         
         #Finding the scale of the plane according to the largest edge length
-        planeScale = 2.0 * self.maxEdgeLen
+        planeScale = 2.0 * self.avgEdgeLen
         
         scaleFac = planeScale / Patch.sampleRes
         centerFac = (Patch.sampleRes - 1)/2.0
@@ -462,6 +458,7 @@ class Patch:
         Draws in a grease pencil canvas the plane used to sample the normals 
         """
         samplePos = self.getNormalSamplesPosition(bmeshObj)
+
         self.sampledNormals = [np.zeros((3,1)) for i in range(Patch.sampleRes**2)]
         for y in range(Patch.sampleRes):
             for x in range(Patch.sampleRes):
