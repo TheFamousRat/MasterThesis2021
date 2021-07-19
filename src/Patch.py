@@ -79,13 +79,13 @@ class Patch:
         Calculates the sum of areas of the triangles of the patch
         """
         #Total area (sum of triangle areas)
-        self.totalArea = np.sum([bmeshObj.faces[faceIdx].calc_area() for faceIdx in self.getFacesIdxIterator()])
+        #self.totalArea = np.sum([bmeshObj.faces[faceIdx].calc_area() for faceIdx in self.getFacesIdxIterator()])
 
         #Max edge length
         self.avgEdgeLen = np.average([bmeshObj.edges[edgeIdx].calc_length() for edgeIdx in self.getEdgesIdx(bmeshObj)])
 
         #Barycenter (unweighted average of vertices)
-        self.barycenter = np.average([np.array(bmeshObj.verts[vertexIdx].co) for vertexIdx in self.verticesIdxList], axis = 0) 
+        #self.barycenter = np.average([np.array(bmeshObj.verts[vertexIdx].co) for vertexIdx in self.verticesIdxList], axis = 0) 
 
     def calculateFaceWeights(self, bmeshObj):
         """
@@ -103,7 +103,7 @@ class Patch:
             #Calculating the max face area, to normalize face areas later
             maxFaceSize = max(maxFaceSize, bmeshObj.faces[faceIdx].calc_area())
             #Baking faces barycenters
-            facesBarycenters[faceIdx] = self.getFaceBarycenter(bmeshObj.faces[faceIdx])
+            facesBarycenters[faceIdx] = Patch.getFaceBarycenter(bmeshObj.faces[faceIdx])
             #Finding the largest distance between the central face and a triangle barycenter
             facesDists[faceIdx] = np.linalg.norm(facesBarycenters[faceIdx] - centralPos)
 
@@ -147,7 +147,7 @@ class Patch:
         xAxis = np.array([0.0, 0.0, 0.0])
         for faceIdx in self.getFacesIdxIterator():
             face = bmeshObj.faces[faceIdx]
-            facePos = self.getFaceBarycenter(bmeshObj.faces[faceIdx])
+            facePos = Patch.getFaceBarycenter(bmeshObj.faces[faceIdx])
             faceCenterVec = facePos - centerPos
             dot_zProj = np.dot(self.eigenVecs[:,2], faceCenterVec)
             
@@ -195,7 +195,8 @@ class Patch:
         """
         return np.array(bmeshObj.verts[self.centerVertexIdx].co)
 
-    def getFaceBarycenter(self, face):
+    @staticmethod
+    def getFaceBarycenter(face):
         """
         Returns the barycenter of a given face, in model space
         """

@@ -7,7 +7,7 @@ import time
 import math
 #To compress mesh data files efficiently
 import pickle
-import lzma
+import gzip
 #Blender libs
 import bpy
 import bmesh
@@ -79,7 +79,7 @@ def retrieveBakedData(bakedDataPath, integrityCheckFunction, sourceDataIdx, data
     if os.path.exists(bakedDataPath):
         retrievedData = []
         print("Baked data file found in {}. Loading...".format(bakedDataPath))
-        with lzma.open(bakedDataPath, 'rb') as f:
+        with gzip.open(bakedDataPath, 'rb') as f:
             retrievedData = pickle.load(f) 
         
         print("Checking integrity...")
@@ -101,11 +101,18 @@ def retrieveBakedData(bakedDataPath, integrityCheckFunction, sourceDataIdx, data
             bar.next()
         
         print("\nDumping into a binary file...")
-        with lzma.open(bakedDataPath, 'wb') as f:
+        with gzip.open(bakedDataPath, 'wb') as f:
             pickle.dump(bakedData, f)
         print("Done")
         
         receiverArray.append(np.array(bakedData))
+
+def createBMesh(msh):
+    bmsh = bmesh.from_edit_mesh(msh)
+    bmsh.verts.ensure_lookup_table()
+    bmsh.edges.ensure_lookup_table()
+    bmsh.faces.ensure_lookup_table()
+    return bmsh
 
 ###Body
 #Creating the bmesh
@@ -121,11 +128,7 @@ bpy.ops.mesh.delete_loose()
 bpy.ops.mesh.select_all(action='DESELECT')
        
 
-bm = bmesh.from_edit_mesh(selectedObj.data)
-bm.verts.ensure_lookup_table()
-bm.edges.ensure_lookup_table()
-bm.faces.ensure_lookup_table()
-usedBmesh = bm
+bm = createBMesh(selectedObj.data)
 
 #Storage for mesh data
 meshDataPath = os.path.join(bpy.path.abspath("//"), 'meshesData/{}/'.format(getMeshHash(selectedObj)))
@@ -148,195 +151,205 @@ patchesDataPath = os.path.join(meshDataPath, 'patches.pkl')
 retrieveBakedData(patchesDataPath, checkPatchIntegrity, [v.index for v in bm.verts], createVertexPatch, meshPatches)
 meshPatches = meshPatches[0]
 
-if False:
-    #UV map
-    print("---UV map---")
-    def checkUVMapIntegrity(patchIdx, bakedUVMap):
-        patchRef = meshPatches[patchIdx]
-        patchRef.createCenteredUVMap(bm)
-        
-        return pickle.dumps(patchRef.verticesUVs) == pickle.dumps(bakedUVMap)
+#UV map
+print("---UV map---")
+def checkUVMapIntegrity(patchIdx, bakedUVMap):
+    patchRef = meshPatches[patchIdx]
+    patchRef.createCenteredUVMap(bm)
+    
+    return pickle.dumps(patchRef.verticesUVs) == pickle.dumps(bakedUVMap)
 
-    def bakeUVMap(patchIdx):
-        patch = meshPatches[patchIdx]
-        patch.createCenteredUVMap(bm)
-        return patch.verticesUVs
+def bakeUVMap(patchIdx):
+    patch = meshPatches[patchIdx]
+    patch.createCenteredUVMap(bm)
+    return patch.verticesUVs
 
-    UVMaps = []
-    patchesUVMapsPath = os.path.join(meshDataPath, 'UVMaps.pkl')
-    retrieveBakedData(patchesUVMapsPath, checkUVMapIntegrity, [v.index for v in bm.verts], bakeUVMap, UVMaps)
-    UVMaps = UVMaps[0]
+UVMaps = []
+patchesUVMapsPath = os.path.join(meshDataPath, 'UVMaps.pkl')
+retrieveBakedData(patchesUVMapsPath, checkUVMapIntegrity, [v.index for v in bm.verts], bakeUVMap, UVMaps)
+UVMaps = UVMaps[0]
 
-    print("Applying loaded maps")
-    for i in range(len(meshPatches)):
-        patch = meshPatches[i]
-        patch.verticesUVs = UVMaps[i]
-    print("Done")
+print("Applying loaded maps")
+for i in range(len(meshPatches)):
+    patch = meshPatches[i]
+    patch.verticesUVs = UVMaps[i]
+print("Done")
 
-    #Textures
-    print("---Textures sampling---")
-    Patch.Patch.setupBakingEnvironment(bm)
+#Textures
+print("---Textures sampling---")
 
-    def checkTextureIntegrity(patchIdx, bakedTexturePixels):
-        patchRef = meshPatches[patchIdx]
-        patchRef.bakePatchTexture(bm)
-        
-        return DeepDiff(np.array(patchRef.pixels), np.array(bakedTexturePixels)) == {}
+def checkTextureIntegrity(patchIdx, bakedTexturePixels):
+    patchRef = meshPatches[patchIdx]
+    patchRef.bakePatchTexture(bm)
+    
+    return DeepDiff(np.array(patchRef.pixels), np.array(bakedTexturePixels)) == {}
 
-    def bakePatchTexture(patchIdx):
-        patch = meshPatches[patchIdx]
-        patch.bakePatchTexture(bm)
-        return patch.pixels
+def bakePatchTexture(patchIdx):
+    patch = meshPatches[patchIdx]
+    patch.bakePatchTexture(bm)
+    return patch.pixels
 
+prevEngine = bpy.context.scene.render.engine
 
-    texturesInfos = []
-    patchesTextureFilePath = os.path.join(meshDataPath, 'textures.pkl')
-    retrieveBakedData(patchesTextureFilePath, checkTextureIntegrity, [i for i in range(len(meshPatches))], bakePatchTexture, texturesInfos)
-    texturesInfos = texturesInfos[0]
+Patch.Patch.setupBakingEnvironment(bm)
 
-    print("Setting texture data...")
-    for i in range(len(meshPatches)):
-        patch = meshPatches[i]
-        patch.pixels = texturesInfos[i]
-    print("Done")
+texturesInfos = []
+patchesTextureFilePath = os.path.join(meshDataPath, 'textures.pkl')
+retrieveBakedData(patchesTextureFilePath, checkTextureIntegrity, [i for i in range(len(meshPatches))], bakePatchTexture, texturesInfos)
+texturesInfos = texturesInfos[0]
+
+bpy.context.scene.render.engine = prevEngine
+
+print("Setting texture data...")
+for i in range(len(meshPatches)):
+    patch = meshPatches[i]
+    patch.pixels = texturesInfos[i]
+print("Done")
 
 #Rest of the logic
 print("===LOGIC START===")
 
-##Low rank recovery
-###Building the feature vectors
-##Topological features
-topoFeatures = np.array([patch.eigenVals / np.linalg.norm(patch.eigenVals) for patch in meshPatches])
+##Extracting the image features (needs to be done only once)
+print("Extracting patch texture features")
+import tensorflow as tf
+from tensorflow.keras.applications import VGG16
+import ssl
 
-if False:
-    ##Extracting the image features
-    import tensorflow as tf
-    from tensorflow.keras.applications import VGG16
-    import ssl
+ssl._create_default_https_context = ssl._create_unverified_context
+model = VGG16(weights='imagenet', include_top=False, input_shape=(64, 64, 3), pooling="max")
 
-    ssl._create_default_https_context = ssl._create_unverified_context
-    model = VGG16(weights='imagenet', include_top=False, input_shape=(64, 64, 3), pooling="max")
+formattedPatchPixels = [np.delete(patch.pixels.reshape([1, 64, 64, 4]), 3, 3) for patch in meshPatches]
 
-    formattedPatchPixels = [np.delete(patch.pixels.reshape([1, 64, 64, 4]), 3, 3) for patch in meshPatches]
+allPixels = np.concatenate(formattedPatchPixels)
+allPixels = tf.convert_to_tensor(allPixels, dtype = tf.float32)
+allPixels = ((allPixels / 255.0) * 2.0) - 1.0
 
-    allPixels = np.concatenate(formattedPatchPixels)
-    allPixels = tf.convert_to_tensor(allPixels, dtype = tf.float32)
-    allPixels = ((allPixels / 255.0) * 2.0) - 1.0
+imageFeatures = []
+with tf.device('/gpu:0'):
+    imageFeatures = model.predict(allPixels)
 
-    imageFeatures = []
-    with tf.device('/gpu:0'):
-        imageFeatures = model.predict(allPixels)
+imageFeatures = KernelPCA(n_components = 20, kernel = 'rbf').fit_transform(imageFeatures)
+imageFeatures = imageFeatures * (1.0 / np.amax(np.linalg.norm(imageFeatures, axis = 1)))
 
-    imageFeatures = KernelPCA(n_components = 10, kernel = 'rbf').fit_transform(imageFeatures)
+#Function to estimate face normal based on vertex normals
+def getFaceNormal(face, vertNormals):
+    faceBarycenter = Patch.Patch.getFaceBarycenter(face)
+    ret = np.average([vertNormals[vert.index] * math.exp(-10.0 * np.linalg.norm(faceBarycenter - np.array(vert.co))**2) for vert in face.verts], axis = 0)
+    return ret / np.linalg.norm(ret)
 
+#Starting the denoising iterations
+ITERS_COUNT = 5
+CLUSTER_SIZE = 30
+IMAGE_FEATURES_WEIGHT = 0.1
 
-    ##Building the KDtree
-    clusterSize1 = 100
-    clusterSize2 = 30
+for iterNum in range(ITERS_COUNT):
+    print("Iteration number {}".format(iterNum+1))
+    ##Topological features
+    print("Building the neighborhood system")
+    topoFeatures = np.array([patch.eigenVals / np.linalg.norm(patch.eigenVals) for patch in meshPatches])
+    allFeatures = np.concatenate((topoFeatures, IMAGE_FEATURES_WEIGHT * imageFeatures), axis = 1)
 
-    patchIdx = 589
-
-    #First filtering : taking closest geometric patches
-    kdt1 = KDTree(topoFeatures, leaf_size = clusterSize1, metric = 'euclidean')
-    dists, neighIdx = kdt1.query([topoFeatures[patchIdx]], k=clusterSize1)
-    topoNeighIdx = neighIdx[0]
-
-    #Second one : of the previous neighbours, take the ones closest in terms of texture features
-    kdt2 = KDTree(imageFeatures[topoNeighIdx], leaf_size = clusterSize2, metric = 'euclidean')
-    dists, neighIdx = kdt2.query([imageFeatures[patchIdx]], k=clusterSize2)
-
-    #Select them (illustration)
-    for pIdx in topoNeighIdx[neighIdx[0]]:
-        bm.verts[meshPatches[pIdx].centerVertexIdx].select = True
-
-##Performing recovery on each patch
-def getPatchNormalColumnVector(patch):
-    return np.concatenate(np.array([patch.sampledNormals[i] for i in range(Patch.Patch.samplesCount)]), axis = 0)
-
-kdt = KDTree(topoFeatures,  leaf_size = 40, metric = 'euclidean')
-rankRecoverer = LowRankRecovery.LowRankRecovery()
-clusterSize = 40
-
-newNormals = {}
-
-bar = Bar('Performing low-rank recovery', max=len(meshPatches))
-for patchIdx in range(len(meshPatches)):
-    patch = meshPatches[patchIdx]
-    #Building the patch matrix
-    dists, neighIdx = kdt.query([topoFeatures[patchIdx]], k=clusterSize)
-    neighIdx = neighIdx[0]
-    patchMatrix = np.zeros((3 * Patch.Patch.samplesCount, clusterSize))
-    for i in range(clusterSize):
-        neighbourPatch = meshPatches[neighIdx[i]]
-        patchMatrix[:,i] = getPatchNormalColumnVector(neighbourPatch)
+    #Building the KD-tree
+    rankRecoverer = LowRankRecovery.LowRankRecovery()
+    kdt = KDTree(allFeatures,  leaf_size = CLUSTER_SIZE, metric = 'euclidean')
     
-    #Performing low-rank recovery
-    E = rankRecoverer.recoverLowRank(patchMatrix)
-    recoveredMat = patchMatrix - E
-    #patchRecCol = recoveredMat[:,0]
-    
-    #Recovering a normal for the central vertex
-    #patchRecNormals = np.array([[patchRecCol[x*3 + i] for i in range(3)] for x in range(len(patchRecCol) // 3)])
-    #patchRecNormals = (1.0 / np.linalg.norm(patchRecNormals, axis = 1))[:, np.newaxis] * patchRecNormals #Normalizing the normals
-    
-    #Current normal of the central patch vertex
-    #patchCenterPos = np.array(bm.verts[patch.centerVertexIdx].co)
-    #centralNormal = patch.eigenVecs[:,2]
-    #centralNormal = centralNormal / np.linalg.norm(centralNormal)
-    
-    #Averaging normals to get new normals
-    #angles = [math.acos(np.dot(centralNormal, normal)) for normal in patchRecNormals]
-    #avg = np.average(patchRecNormals, axis = 0) 
-    #newNormal = patch.eigenVecs @ (avg / np.linalg.norm(avg))
-    
-    ###recNormals = [np.average(recoveredMat[:,colIdx].reshape(Patch.Patch.samplesCount,3)[Patch.Patch.centerPatchIdx,:], axis = 0) for colIdx in range(clusterSize)]
-    ###recNormals = np.array(recNormals)
-    ###recNormals = (1.0 / np.linalg.norm(recNormals, axis = 1))[:, np.newaxis] * recNormals
-    ###avg = np.average(recNormals, axis = 0)
-    ###newNormal = patch.eigenVecs @ (avg / np.linalg.norm(avg))
-    #raise Exception("Prout")
-    avg = np.average((recoveredMat[:,0]).reshape(Patch.Patch.samplesCount,3), axis = 0)
-    newNormal = patch.eigenVecs @ (avg / np.linalg.norm(avg))
-    
-    newNormals[patch.centerVertexIdx] = newNormal 
-    bar.next()
-    
-for vIdx in newNormals:
-    vPos = np.array(bm.verts[vIdx].co)
-    normal = newNormals[vIdx]
-    debugDrawing.draw_line(gpencil, gp_frame, (vPos, vPos + 0.02 * normal), (1.0, 5.0), "00ffff")
-    
-#Correcting vertex positions
-newPos = {}
-
-print("Updating vertex positions")
-for patch in meshPatches:
-    centerVert = bm.verts[patch.centerVertexIdx]
-    centerVertexPos = np.array(centerVert.co)
-    
-    disp = np.array([0.0, 0.0, 0.0])
-    
-    #Finding every neighbouring vertex by using linked edge
-    for neighEdge in centerVert.link_edges:
-        #Finding the neighboring vertex
-        otherVert = neighEdge.verts[0 if list(neighEdge.verts)[0] != centerVert else 1]
+    ##Performing recovery on each patch
+    recoveredNormals = {}
+    bar = Bar('Performing low-rank recovery', max=len(meshPatches))
+    for patchIdx in range(len(meshPatches)):
+        patch = meshPatches[patchIdx]
+        #Building the patch matrix
+        dists, neighIdx = kdt.query([allFeatures[patchIdx]], k = CLUSTER_SIZE)
+        neighIdx = neighIdx[0]
+        patchMatrix = np.zeros((3 * Patch.Patch.samplesCount, CLUSTER_SIZE))
+        for i in range(CLUSTER_SIZE):
+            neighbourPatch = meshPatches[neighIdx[i]]
+            patchMatrix[:,i] = neighbourPatch.sampledNormals.reshape((Patch.Patch.samplesCount*3))
         
-        #Parsing the faces linked to that edge (and thus also neighboring the central vertex)
-        for linkedFace in neighEdge.link_faces:
-            faceBarycenter = np.array(linkedFace.calc_center_median())
-            faceNormal = np.array([0.0, 0.0, 0.0])
-            for faceVert in linkedFace.verts:
-                faceNormal += newNormals[faceVert.index] * math.exp(-np.linalg.norm(faceBarycenter - np.array(faceVert.co)))
-            faceNormal = faceNormal / np.linalg.norm(faceNormal)
-            
-            disp += faceNormal * np.dot(faceNormal, np.array(otherVert.co) - centerVertexPos)
-    
-    disp = (1.0/(3.0 * len(centerVert.link_faces))) * disp
-    
-    newPos[patch.centerVertexIdx] = centerVertexPos + disp 
+        #Performing low-rank recovery
+        E = rankRecoverer.recoverLowRank(patchMatrix)
+        recoveredMat = patchMatrix - E
 
-#Applying new positions
-for vIdx in newPos:
-    bm.verts[vIdx].co = newPos[vIdx]
+        avg = np.average((recoveredMat[:,0]).reshape(Patch.Patch.samplesCount,3), axis = 0)
+        newNormal = patch.eigenVecs @ (avg / np.linalg.norm(avg))
+        
+        recoveredNormals[patch.centerVertexIdx] = newNormal 
+        bar.next()
+    print("\n")
     
-bmesh.update_edit_mesh(bpy.context.active_object.data)
+    #Applying bilateral normal filtering on the recovered normals
+    print("Performing normal filtering...")
+    filteredNormals = {}
+    
+    for patch in meshPatches:
+        centerVert = bm.verts[patch.centerVertexIdx]
+        centerVertNormal = recoveredNormals[centerVert.index]
+        centerVertPos = np.array(centerVert.co)
+        filteredNormal = np.zeros((3))
+        
+        for neighFace in centerVert.link_faces:
+            faceBary = Patch.Patch.getFaceBarycenter(neighFace)
+            faceNormal = getFaceNormal(neighFace, recoveredNormals)
+            filteredNormal += neighFace.calc_area() * math.exp(-np.linalg.norm(faceBary - centerVertPos)) * math.exp(-np.linalg.norm(faceNormal - centerVertNormal)) * faceNormal
+            
+        filteredNormals[centerVert.index] = filteredNormal / np.linalg.norm(filteredNormal)
+    
+    #Debug drawing
+    #for patch in meshPatches:
+    #    centerVert = bm.verts[patch.centerVertexIdx]
+    #    centerVertPos = np.array(centerVert.co)
+    #    dir = filteredNormals[centerVert.index]
+    #    debugDrawing.draw_line(gpencil, gp_frame, (centerVertPos, centerVertPos + 0.02 * dir), (0.5, 3.0), "00ffff")
+    
+    #Correcting vertex positions
+    newPos = {}
+
+    print("Updating vertex positions")
+    for patch in meshPatches:
+        centerVert = bm.verts[patch.centerVertexIdx]
+        centerVertexPos = np.array(centerVert.co)
+        
+        disp = np.array([0.0, 0.0, 0.0])
+        
+        #Finding every neighbouring vertex by using linked edge
+        for neighEdge in centerVert.link_edges:
+            #Finding the neighboring vertex
+            otherVert = neighEdge.verts[0 if list(neighEdge.verts)[0] != centerVert else 1]
+            
+            #Parsing the faces linked to that edge (and thus also neighboring the central vertex)
+            for linkedFace in neighEdge.link_faces:
+                faceBarycenter = np.array(linkedFace.calc_center_median())
+                faceNormal = getFaceNormal(linkedFace, filteredNormals)
+                
+                disp += faceNormal * np.dot(faceNormal, np.array(otherVert.co) - centerVertexPos)
+        
+        disp = (1.0/(3.0 * len(centerVert.link_faces))) * disp
+        
+        newPos[patch.centerVertexIdx] = centerVertexPos + disp 
+
+    #Applying new positions
+    totChange = 0.0
+    for vIdx in newPos:
+        totChange += np.linalg.norm(np.array(bm.verts[vIdx].co) - newPos[vIdx])
+        bm.verts[vIdx].co = newPos[vIdx]
+    print("Change per vertex : {}".format(totChange / len(bm.verts)))
+    
+    print("Updating mesh representation in Blender...")
+    bmesh.update_edit_mesh(bpy.context.active_object.data)
+    
+    print("Checking convergence")
+    converged = ((iterNum + 1) == ITERS_COUNT)
+    
+    if converged:
+        print("Convergence reached")
+        break
+    else:
+        bm = createBMesh(selectedObj.data)
+        
+        bar = Bar('Updating the patches', max=len(meshPatches))
+        for patch in meshPatches:
+            patch.computeProperties(bm)
+            bar.next()
+        print("\n")
+    
+print("End of script reached")
