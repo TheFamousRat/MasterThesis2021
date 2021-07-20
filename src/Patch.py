@@ -79,7 +79,7 @@ class Patch:
         Calculates the sum of areas of the triangles of the patch
         """
         #Total area (sum of triangle areas)
-        #self.totalArea = np.sum([bmeshObj.faces[faceIdx].calc_area() for faceIdx in self.getFacesIdxIterator()])
+        self.totalArea = np.sum([bmeshObj.faces[faceIdx].calc_area() for faceIdx in self.getFacesIdxIterator()])
 
         #Max edge length
         self.avgEdgeLen = np.average([bmeshObj.edges[edgeIdx].calc_length() for edgeIdx in self.getEdgesIdx(bmeshObj)])

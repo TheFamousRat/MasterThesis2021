@@ -26,6 +26,8 @@ from deepdiff import DeepDiff
 #Multithreading
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 
+import json
+
 ##Local libraries (re-)loading
 #Loading user-defined modules (subject to frequent changes and needed reloading)
 pathsToAdd = ["/home/home/thefamousrat/Documents/KU Leuven/Master Thesis/MasterThesis2021/src"]
@@ -127,13 +129,30 @@ bpy.ops.mesh.select_all(action='SELECT')
 bpy.ops.mesh.delete_loose()
 bpy.ops.mesh.select_all(action='DESELECT')
        
-
 bm = createBMesh(selectedObj.data)
 
 #Storage for mesh data
-meshDataPath = os.path.join(bpy.path.abspath("//"), 'meshesData/{}/'.format(getMeshHash(selectedObj)))
+basedir = bpy.path.abspath("//")
+meshDataPath = os.path.join(basedir, 'meshesData/{}/'.format(getMeshHash(selectedObj)))
 if not os.path.exists(meshDataPath):
     os.makedirs(meshDataPath)
+
+#Storage for test data
+testDataFolderPath = os.path.join(basedir, 'testing')
+if not os.path.exists(testDataFolderPath):
+    os.makedirs(testDataFolderPath)
+
+testDataJsonPath = os.path.join(testDataFolderPath, 'testsResults.json')
+
+testsData = None
+if os.path.exists(testDataJsonPath):
+    with open(testDataJsonPath, 'r') as f:
+        testsData = json.load(f)
+else:
+    testsData = {}
+
+if not selectedObj.name in testsData:
+        testsData[selectedObj.name] = []
 
 ##Covering the mesh with patches
 print("===BAKING START===")
@@ -225,8 +244,8 @@ allPixels = tf.convert_to_tensor(allPixels, dtype = tf.float32)
 allPixels = ((allPixels / 255.0) * 2.0) - 1.0
 
 imageFeatures = []
-with tf.device('/gpu:0'):
-    imageFeatures = model.predict(allPixels)
+#with tf.device('/gpu:0'):
+imageFeatures = model.predict(allPixels)
 
 imageFeatures = KernelPCA(n_components = 20, kernel = 'rbf').fit_transform(imageFeatures)
 imageFeatures = imageFeatures * (1.0 / np.amax(np.linalg.norm(imageFeatures, axis = 1)))
@@ -237,10 +256,23 @@ def getFaceNormal(face, vertNormals):
     ret = np.average([vertNormals[vert.index] * math.exp(-10.0 * np.linalg.norm(faceBarycenter - np.array(vert.co))**2) for vert in face.verts], axis = 0)
     return ret / np.linalg.norm(ret)
 
+#Utility to export a mesh to a gltf file (to get back on track easily in case of crash)
+def exportToGltf(object, filepath_):
+    for obj in bpy.data.objects:
+        obj.select_set(False)
+    object.select_set(True)
+
+    bpy.ops.export_scene.gltf(
+        filepath=filepath_,
+        export_selected=True,
+        use_selection=True
+    )
+
 #Starting the denoising iterations
 ITERS_COUNT = 5
 CLUSTER_SIZE = 30
-IMAGE_FEATURES_WEIGHT = 0.1
+IMAGE_FEATURES_WEIGHT = 0.0
+USE_GNF = True
 
 for iterNum in range(ITERS_COUNT):
     print("Iteration number {}".format(iterNum+1))
@@ -269,9 +301,13 @@ for iterNum in range(ITERS_COUNT):
         #Performing low-rank recovery
         E = rankRecoverer.recoverLowRank(patchMatrix)
         recoveredMat = patchMatrix - E
-
-        avg = np.average((recoveredMat[:,0]).reshape(Patch.Patch.samplesCount,3), axis = 0)
-        newNormal = patch.eigenVecs @ (avg / np.linalg.norm(avg))
+        
+        origNormal = np.array(bm.verts[patch.centerVertexIdx].normal)
+        patchNormals = np.array([np.average((recoveredMat[:,i]).reshape(Patch.Patch.samplesCount,3), axis = 0) for i in range(CLUSTER_SIZE)])
+        newNormal = patch.eigenVecs @ patchNormals[np.argsort(np.arccos(np.dot(patchNormals, origNormal)))[CLUSTER_SIZE // 2]]
+        
+        #avg = np.average((recoveredMat[:,0]).reshape(Patch.Patch.samplesCount,3), axis = 0)
+        #newNormal = patch.eigenVecs @ (avg / np.linalg.norm(avg))
         
         recoveredNormals[patch.centerVertexIdx] = newNormal 
         bar.next()
@@ -281,18 +317,21 @@ for iterNum in range(ITERS_COUNT):
     print("Performing normal filtering...")
     filteredNormals = {}
     
-    for patch in meshPatches:
-        centerVert = bm.verts[patch.centerVertexIdx]
-        centerVertNormal = recoveredNormals[centerVert.index]
-        centerVertPos = np.array(centerVert.co)
-        filteredNormal = np.zeros((3))
-        
-        for neighFace in centerVert.link_faces:
-            faceBary = Patch.Patch.getFaceBarycenter(neighFace)
-            faceNormal = getFaceNormal(neighFace, recoveredNormals)
-            filteredNormal += neighFace.calc_area() * math.exp(-np.linalg.norm(faceBary - centerVertPos)) * math.exp(-np.linalg.norm(faceNormal - centerVertNormal)) * faceNormal
+    if not USE_GNF:
+        filteredNormals = recoveredNormals
+    else:
+        for patch in meshPatches:
+            centerVert = bm.verts[patch.centerVertexIdx]
+            centerVertNormal = recoveredNormals[centerVert.index]
+            centerVertPos = np.array(centerVert.co)
+            filteredNormal = np.zeros((3))
             
-        filteredNormals[centerVert.index] = filteredNormal / np.linalg.norm(filteredNormal)
+            for neighFace in centerVert.link_faces:
+                faceBary = Patch.Patch.getFaceBarycenter(neighFace)
+                faceNormal = getFaceNormal(neighFace, recoveredNormals)
+                filteredNormal += neighFace.calc_area() * math.exp(-np.linalg.norm(faceBary - centerVertPos)) * math.exp(-np.linalg.norm(faceNormal - centerVertNormal)) * faceNormal
+                
+            filteredNormals[centerVert.index] = filteredNormal / np.linalg.norm(filteredNormal)
     
     #Debug drawing
     #for patch in meshPatches:
@@ -300,6 +339,8 @@ for iterNum in range(ITERS_COUNT):
     #    centerVertPos = np.array(centerVert.co)
     #    dir = filteredNormals[centerVert.index]
     #    debugDrawing.draw_line(gpencil, gp_frame, (centerVertPos, centerVertPos + 0.02 * dir), (0.5, 3.0), "00ffff")
+    
+    #raise Exception("Test")
     
     #Correcting vertex positions
     newPos = {}
@@ -329,13 +370,23 @@ for iterNum in range(ITERS_COUNT):
 
     #Applying new positions
     totChange = 0.0
-    for vIdx in newPos:
-        totChange += np.linalg.norm(np.array(bm.verts[vIdx].co) - newPos[vIdx])
+    for patch in meshPatches:
+        vIdx = patch.centerVertexIdx
+        totChange += np.linalg.norm(np.array(bm.verts[vIdx].co) - newPos[vIdx]) / patch.totalArea
         bm.verts[vIdx].co = newPos[vIdx]
-    print("Change per vertex : {}".format(totChange / len(bm.verts)))
+    changeRel = totChange / len(bm.verts)
+    print("Change per vertex : {}".format(changeRel))
+    
+    #Saving the change this iteration for this mesh
+    testsData[selectedObj.name].append(changeRel)
     
     print("Updating mesh representation in Blender...")
     bmesh.update_edit_mesh(bpy.context.active_object.data)
+    
+    print("Export mesh at this step")
+    exportName = "{}_backup.glb".format(selectedObj.name, iterNum)
+    exportPath = os.path.join(testDataFolderPath, exportName)
+    exportToGltf(selectedObj, exportPath)
     
     print("Checking convergence")
     converged = ((iterNum + 1) == ITERS_COUNT)
@@ -344,6 +395,8 @@ for iterNum in range(ITERS_COUNT):
         print("Convergence reached")
         break
     else:
+        #The process is not done or converged yet, we thus update the patches info with the new mesh
+        bpy.ops.object.mode_set(mode='EDIT')
         bm = createBMesh(selectedObj.data)
         
         bar = Bar('Updating the patches', max=len(meshPatches))
@@ -351,5 +404,9 @@ for iterNum in range(ITERS_COUNT):
             patch.computeProperties(bm)
             bar.next()
         print("\n")
+    
+print("Saving test data...")
+with open(testDataJsonPath, 'w') as f:
+    json.dump(testsData, f, indent = 4)
     
 print("End of script reached")
