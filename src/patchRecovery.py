@@ -73,11 +73,13 @@ def intToSignedBitList(val, bitsAmount):
     """
     return [1-2*bool(val & (1<<j)) for j in range(bitsAmount)]
 
-def retrieveBakedData(bakedDataPath, integrityCheckFunction, sourceDataIdx, dataBakingFunction, receiverArray, dumpToFile = True):
+def retrieveBakedData(bakedDataPath, integrityCheckFunction, sourceDataIdx, dataBakingFunction, receiverArray):
     """
     
     
     """
+    rebuiltData = False
+    
     if os.path.exists(bakedDataPath):
         retrievedData = []
         print("Baked data file found in {}. Loading...".format(bakedDataPath))
@@ -108,13 +110,18 @@ def retrieveBakedData(bakedDataPath, integrityCheckFunction, sourceDataIdx, data
         print("Done")
         
         receiverArray.append(np.array(bakedData))
+        rebuiltData = True
+    
+    return rebuiltData
+
 
 def createBMesh(msh):
     bmsh = bmesh.from_edit_mesh(msh)
     bmsh.verts.ensure_lookup_table()
     bmsh.edges.ensure_lookup_table()
     bmsh.faces.ensure_lookup_table()
-    return bmsh
+    avgEdgeLen = np.average([edge.calc_length() for edge in bmsh.edges])
+    return bmsh, avgEdgeLen
 
 ###Body
 #Creating the bmesh
@@ -129,7 +136,7 @@ bpy.ops.mesh.select_all(action='SELECT')
 bpy.ops.mesh.delete_loose()
 bpy.ops.mesh.select_all(action='DESELECT')
        
-bm = createBMesh(selectedObj.data)
+bm, avgEdgeLen = createBMesh(selectedObj.data)
 
 #Storage for mesh data
 basedir = bpy.path.abspath("//")
@@ -169,6 +176,8 @@ meshPatches = []
 patchesDataPath = os.path.join(meshDataPath, 'patches.pkl')
 retrieveBakedData(patchesDataPath, checkPatchIntegrity, [v.index for v in bm.verts], createVertexPatch, meshPatches)
 meshPatches = meshPatches[0]
+
+raise Exception("Prout")
 
 #UV map
 print("---UV map---")
@@ -214,7 +223,7 @@ Patch.Patch.setupBakingEnvironment(bm)
 
 texturesInfos = []
 patchesTextureFilePath = os.path.join(meshDataPath, 'textures.pkl')
-retrieveBakedData(patchesTextureFilePath, checkTextureIntegrity, [i for i in range(len(meshPatches))], bakePatchTexture, texturesInfos)
+rebuiltData = retrieveBakedData(patchesTextureFilePath, checkTextureIntegrity, [i for i in range(len(meshPatches))], bakePatchTexture, texturesInfos)
 texturesInfos = texturesInfos[0]
 
 bpy.context.scene.render.engine = prevEngine
@@ -225,30 +234,45 @@ for i in range(len(meshPatches)):
     patch.pixels = texturesInfos[i]
 print("Done")
 
+print("---Image features---")
+imageFeatures = []
+imageFeaturesPath = os.path.join(meshDataPath, 'imageFeatures.pkl')
+
+if (not rebuiltData) and os.path.exists(imageFeaturesPath):
+    print("Loading baked image features...")
+    with gzip.open(imageFeaturesPath, 'rb') as f:
+        imageFeatures = pickle.load(f)
+
+if len(imageFeatures) == 0:
+    ##Extracting the image features (needs to be done only once)
+    print("Extracting patch texture features")
+    import tensorflow as tf
+    from tensorflow.keras.applications import VGG16
+    import ssl
+
+    ssl._create_default_https_context = ssl._create_unverified_context
+    model = VGG16(weights='imagenet', include_top=False, input_shape=(64, 64, 3), pooling="max")
+
+    formattedPatchPixels = [np.delete(patch.pixels.reshape([1, 64, 64, 4]), 3, 3) for patch in meshPatches]
+
+    allPixels = np.concatenate(formattedPatchPixels)
+    allPixels = tf.convert_to_tensor(allPixels, dtype = tf.float32)
+    allPixels = ((allPixels / 255.0) * 2.0) - 1.0
+
+    imageFeatures = []
+    #with tf.device('/gpu:0'):
+    imageFeatures = model.predict(allPixels)
+
+    imageFeatures = KernelPCA(n_components = 20, kernel = 'rbf').fit_transform(imageFeatures)
+    imageFeatures = imageFeatures * (1.0 / np.amax(np.linalg.norm(imageFeatures, axis = 1)))
+    
+    print("Dumping texture features to file...")
+    with gzip.open(imageFeaturesPath, 'wb') as f:
+        pickle.dump(imageFeatures, f)
+    print("Done")
+
 #Rest of the logic
 print("===LOGIC START===")
-
-##Extracting the image features (needs to be done only once)
-print("Extracting patch texture features")
-import tensorflow as tf
-from tensorflow.keras.applications import VGG16
-import ssl
-
-ssl._create_default_https_context = ssl._create_unverified_context
-model = VGG16(weights='imagenet', include_top=False, input_shape=(64, 64, 3), pooling="max")
-
-formattedPatchPixels = [np.delete(patch.pixels.reshape([1, 64, 64, 4]), 3, 3) for patch in meshPatches]
-
-allPixels = np.concatenate(formattedPatchPixels)
-allPixels = tf.convert_to_tensor(allPixels, dtype = tf.float32)
-allPixels = ((allPixels / 255.0) * 2.0) - 1.0
-
-imageFeatures = []
-#with tf.device('/gpu:0'):
-imageFeatures = model.predict(allPixels)
-
-imageFeatures = KernelPCA(n_components = 20, kernel = 'rbf').fit_transform(imageFeatures)
-imageFeatures = imageFeatures * (1.0 / np.amax(np.linalg.norm(imageFeatures, axis = 1)))
 
 #Function to estimate face normal based on vertex normals
 def getFaceNormal(face, vertNormals):
@@ -257,22 +281,27 @@ def getFaceNormal(face, vertNormals):
     return ret / np.linalg.norm(ret)
 
 #Utility to export a mesh to a gltf file (to get back on track easily in case of crash)
-def exportToGltf(object, filepath_):
+def exportToGltf(objToExp, filepath_):
     for obj in bpy.data.objects:
         obj.select_set(False)
-    object.select_set(True)
+    objToExp.select_set(True)
 
-    bpy.ops.export_scene.gltf(
+    matBefore = objToExp.matrix_world.copy()
+    objToExp.matrix_world.identity()
+    
+    bpy.ops.export_scene.obj(
         filepath=filepath_,
-        export_selected=True,
         use_selection=True
     )
+    
+    objToExp.matrix_world = matBefore
 
 #Starting the denoising iterations
 ITERS_COUNT = 5
 CLUSTER_SIZE = 30
-IMAGE_FEATURES_WEIGHT = 0.0
+IMAGE_FEATURES_WEIGHT = 0.1
 USE_GNF = True
+
 
 for iterNum in range(ITERS_COUNT):
     print("Iteration number {}".format(iterNum+1))
@@ -304,6 +333,8 @@ for iterNum in range(ITERS_COUNT):
         
         origNormal = np.array(bm.verts[patch.centerVertexIdx].normal)
         patchNormals = np.array([np.average((recoveredMat[:,i]).reshape(Patch.Patch.samplesCount,3), axis = 0) for i in range(CLUSTER_SIZE)])
+        patchNormals = patchNormals / np.linalg.norm(patchNormals, axis=1)[:,np.newaxis]
+        
         newNormal = patch.eigenVecs @ patchNormals[np.argsort(np.arccos(np.dot(patchNormals, origNormal)))[CLUSTER_SIZE // 2]]
         
         #avg = np.average((recoveredMat[:,0]).reshape(Patch.Patch.samplesCount,3), axis = 0)
@@ -320,6 +351,11 @@ for iterNum in range(ITERS_COUNT):
     if not USE_GNF:
         filteredNormals = recoveredNormals
     else:
+        currentFiltered = {vert.index : vert.normal}
+        
+        sigmaS = 2.0 * (0.2)
+        sigmaR = 2.0 * (avgEdgeLen)
+        
         for patch in meshPatches:
             centerVert = bm.verts[patch.centerVertexIdx]
             centerVertNormal = recoveredNormals[centerVert.index]
@@ -329,7 +365,7 @@ for iterNum in range(ITERS_COUNT):
             for neighFace in centerVert.link_faces:
                 faceBary = Patch.Patch.getFaceBarycenter(neighFace)
                 faceNormal = getFaceNormal(neighFace, recoveredNormals)
-                filteredNormal += neighFace.calc_area() * math.exp(-np.linalg.norm(faceBary - centerVertPos)) * math.exp(-np.linalg.norm(faceNormal - centerVertNormal)) * faceNormal
+                filteredNormal += neighFace.calc_area() * math.exp(-(np.linalg.norm(faceBary - centerVertPos)**2.0)/sigmaS) * math.exp(-(np.linalg.norm(faceNormal - centerVertNormal)**2.0)/sigmaR) * faceNormal
                 
             filteredNormals[centerVert.index] = filteredNormal / np.linalg.norm(filteredNormal)
     
@@ -384,7 +420,7 @@ for iterNum in range(ITERS_COUNT):
     bmesh.update_edit_mesh(bpy.context.active_object.data)
     
     print("Export mesh at this step")
-    exportName = "{}_backup.glb".format(selectedObj.name, iterNum)
+    exportName = "{}_backup.obj".format(selectedObj.name, iterNum)
     exportPath = os.path.join(testDataFolderPath, exportName)
     exportToGltf(selectedObj, exportPath)
     
@@ -397,7 +433,7 @@ for iterNum in range(ITERS_COUNT):
     else:
         #The process is not done or converged yet, we thus update the patches info with the new mesh
         bpy.ops.object.mode_set(mode='EDIT')
-        bm = createBMesh(selectedObj.data)
+        bm, avgEdgeLen = createBMesh(selectedObj.data)
         
         bar = Bar('Updating the patches', max=len(meshPatches))
         for patch in meshPatches:
