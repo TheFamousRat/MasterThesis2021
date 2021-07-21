@@ -25,7 +25,9 @@ from progress.bar import Bar
 from deepdiff import DeepDiff
 #Multithreading
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
-
+#Deepcopying
+import copy
+#Storing test data
 import json
 
 ##Local libraries (re-)loading
@@ -165,19 +167,17 @@ if not selectedObj.name in testsData:
 print("===BAKING START===")
 print("---Patches creation---")
 def checkPatchIntegrity(patchIdx, bakedPatch):
-    patchRef = createVertexPatch(bakedPatch.centerVertexIdx)
+    patchRef = createVertexPatch(bakedPatch.centerFaceIdx)
     
     return DeepDiff(patchRef, bakedPatch) == {}
 
-def createVertexPatch(vertIdx):
-    return Patch.Patch(bm, bm.verts[vertIdx].index, RINGS_NUM)
+def createVertexPatch(faceIdx):
+    return Patch.Patch(bm, bm.faces[faceIdx].index, RINGS_NUM)
 
 meshPatches = []
 patchesDataPath = os.path.join(meshDataPath, 'patches.pkl')
-retrieveBakedData(patchesDataPath, checkPatchIntegrity, [v.index for v in bm.verts], createVertexPatch, meshPatches)
+retrieveBakedData(patchesDataPath, checkPatchIntegrity, [f.index for f in bm.faces], createVertexPatch, meshPatches)
 meshPatches = meshPatches[0]
-
-raise Exception("Prout")
 
 #UV map
 print("---UV map---")
@@ -194,7 +194,7 @@ def bakeUVMap(patchIdx):
 
 UVMaps = []
 patchesUVMapsPath = os.path.join(meshDataPath, 'UVMaps.pkl')
-retrieveBakedData(patchesUVMapsPath, checkUVMapIntegrity, [v.index for v in bm.verts], bakeUVMap, UVMaps)
+retrieveBakedData(patchesUVMapsPath, checkUVMapIntegrity, list(range(len(meshPatches))), bakeUVMap, UVMaps)
 UVMaps = UVMaps[0]
 
 print("Applying loaded maps")
@@ -274,12 +274,6 @@ if len(imageFeatures) == 0:
 #Rest of the logic
 print("===LOGIC START===")
 
-#Function to estimate face normal based on vertex normals
-def getFaceNormal(face, vertNormals):
-    faceBarycenter = Patch.Patch.getFaceBarycenter(face)
-    ret = np.average([vertNormals[vert.index] * math.exp(-10.0 * np.linalg.norm(faceBarycenter - np.array(vert.co))**2) for vert in face.verts], axis = 0)
-    return ret / np.linalg.norm(ret)
-
 #Utility to export a mesh to a gltf file (to get back on track easily in case of crash)
 def exportToGltf(objToExp, filepath_):
     for obj in bpy.data.objects:
@@ -301,7 +295,6 @@ ITERS_COUNT = 5
 CLUSTER_SIZE = 30
 IMAGE_FEATURES_WEIGHT = 0.1
 USE_GNF = True
-
 
 for iterNum in range(ITERS_COUNT):
     print("Iteration number {}".format(iterNum+1))
@@ -331,7 +324,7 @@ for iterNum in range(ITERS_COUNT):
         E = rankRecoverer.recoverLowRank(patchMatrix)
         recoveredMat = patchMatrix - E
         
-        origNormal = np.array(bm.verts[patch.centerVertexIdx].normal)
+        origNormal = np.array(bm.faces[patch.centerFaceIdx].normal)
         patchNormals = np.array([np.average((recoveredMat[:,i]).reshape(Patch.Patch.samplesCount,3), axis = 0) for i in range(CLUSTER_SIZE)])
         patchNormals = patchNormals / np.linalg.norm(patchNormals, axis=1)[:,np.newaxis]
         
@@ -340,76 +333,87 @@ for iterNum in range(ITERS_COUNT):
         #avg = np.average((recoveredMat[:,0]).reshape(Patch.Patch.samplesCount,3), axis = 0)
         #newNormal = patch.eigenVecs @ (avg / np.linalg.norm(avg))
         
-        recoveredNormals[patch.centerVertexIdx] = newNormal 
+        recoveredNormals[patch.centerFaceIdx] = newNormal 
         bar.next()
     print("\n")
     
     #Applying bilateral normal filtering on the recovered normals
-    print("Performing normal filtering...")
     filteredNormals = {}
     
     if not USE_GNF:
         filteredNormals = recoveredNormals
     else:
-        currentFiltered = {vert.index : vert.normal}
         
-        sigmaS = 2.0 * (0.2)
-        sigmaR = 2.0 * (avgEdgeLen)
+        tempNormals = {patch.centerFaceIdx : recoveredNormals[patch.centerFaceIdx] for patch in meshPatches}
+        itersNum = 3
         
-        for patch in meshPatches:
-            centerVert = bm.verts[patch.centerVertexIdx]
-            centerVertNormal = recoveredNormals[centerVert.index]
-            centerVertPos = np.array(centerVert.co)
-            filteredNormal = np.zeros((3))
+        bar = Bar('Performing normal filtering', max=len(itersNum))
+        for iii in range(3):
+            sigmaS = 2.0 * (0.2)
+            sigmaR = 2.0 * (avgEdgeLen)
             
-            for neighFace in centerVert.link_faces:
-                faceBary = Patch.Patch.getFaceBarycenter(neighFace)
-                faceNormal = getFaceNormal(neighFace, recoveredNormals)
-                filteredNormal += neighFace.calc_area() * math.exp(-(np.linalg.norm(faceBary - centerVertPos)**2.0)/sigmaS) * math.exp(-(np.linalg.norm(faceNormal - centerVertNormal)**2.0)/sigmaR) * faceNormal
+            for patch in meshPatches:
+                patchCenter = patch.getOrigin(bm)
+                patchNormal = tempNormals[patch.centerFaceIdx]
                 
-            filteredNormals[centerVert.index] = filteredNormal / np.linalg.norm(filteredNormal)
+                #for neighFaceIdx in patch.rings[1]:
+                #    neighFace = bm.faces[neighFaceIdx]
+                #    faceBary = Patch.Patch.getFaceBarycenter(neighFace)
+                #    faceNormal = tempNormals[neighFaceIdx]
+                #    filteredNormal += neighFace.calc_area() * math.exp(-(np.linalg.norm(faceBary - patchCenter)**2.0)/sigmaS) * math.exp(-(np.linalg.norm(faceNormal - patchNormal)**2.0)/sigmaR) * faceNormal
+                weightedNormals = [bm.faces[neighFaceIdx].calc_area() * math.exp(-(np.linalg.norm(Patch.Patch.getFaceBarycenter(bm.faces[neighFaceIdx]) - patchCenter)**2.0)/sigmaS) * math.exp(-(np.linalg.norm(tempNormals[neighFaceIdx] - patchNormal)**2.0)/sigmaR) * tempNormals[neighFaceIdx] for neighFaceIdx in patch.rings[1]] 
+                filteredNormal = np.sum(weightedNormals, axis = 0)
+                
+                filteredNormals[patch.centerFaceIdx] = filteredNormal / np.linalg.norm(filteredNormal)
+            
+            tot = 0.0
+            for faceIdx in tempNormals:
+                tot += np.linalg.norm(tempNormals[faceIdx] - filteredNormals[faceIdx])
+            print(tot / len(meshPatches))
+                
+            tempNormals = copy.deepcopy(filteredNormals)
+            bar.next()
+        
+        print("\n")
     
-    #Debug drawing
-    #for patch in meshPatches:
-    #    centerVert = bm.verts[patch.centerVertexIdx]
-    #    centerVertPos = np.array(centerVert.co)
-    #    dir = filteredNormals[centerVert.index]
-    #    debugDrawing.draw_line(gpencil, gp_frame, (centerVertPos, centerVertPos + 0.02 * dir), (0.5, 3.0), "00ffff")
-    
-    #raise Exception("Test")
+    if False:
+        #Debug drawing
+        for patch in meshPatches:
+            centerPosIdx = patch.centerFaceIdx
+            centerPos = Patch.Patch.getFaceBarycenter(bm.faces[centerPosIdx])
+            dir = filteredNormals[centerPosIdx]
+            debugDrawing.draw_line(gpencil, gp_frame, (centerPos, centerPos + 0.02 * dir), (0.5, 3.0), "00ffff")
     
     #Correcting vertex positions
     newPos = {}
 
     print("Updating vertex positions")
-    for patch in meshPatches:
-        centerVert = bm.verts[patch.centerVertexIdx]
-        centerVertexPos = np.array(centerVert.co)
+    for vert in bm.verts:
+        vertexPos = np.array(vert.co)
         
         disp = np.array([0.0, 0.0, 0.0])
         
         #Finding every neighbouring vertex by using linked edge
-        for neighEdge in centerVert.link_edges:
+        for neighEdge in vert.link_edges:
             #Finding the neighboring vertex
-            otherVert = neighEdge.verts[0 if list(neighEdge.verts)[0] != centerVert else 1]
+            otherVert = neighEdge.verts[0 if list(neighEdge.verts)[0] != vert else 1]
             
             #Parsing the faces linked to that edge (and thus also neighboring the central vertex)
             for linkedFace in neighEdge.link_faces:
                 faceBarycenter = np.array(linkedFace.calc_center_median())
-                faceNormal = getFaceNormal(linkedFace, filteredNormals)
+                faceNormal = filteredNormals[linkedFace.index]
                 
-                disp += faceNormal * np.dot(faceNormal, np.array(otherVert.co) - centerVertexPos)
+                disp += faceNormal * np.dot(faceNormal, np.array(otherVert.co) - vertexPos)
         
-        disp = (1.0/(3.0 * len(centerVert.link_faces))) * disp
+        disp = (1.0/(3.0 * len(vert.link_faces))) * disp
         
-        newPos[patch.centerVertexIdx] = centerVertexPos + disp 
+        newPos[vert.index] = vertexPos + disp 
 
     #Applying new positions
     totChange = 0.0
-    for patch in meshPatches:
-        vIdx = patch.centerVertexIdx
-        totChange += np.linalg.norm(np.array(bm.verts[vIdx].co) - newPos[vIdx]) / patch.totalArea
-        bm.verts[vIdx].co = newPos[vIdx]
+    for vert in bm.verts:
+        totChange += np.linalg.norm(np.array(vert.co) - newPos[vert.index]) / sum([face.calc_area() for face in vert.link_faces])
+        vert.co = newPos[vert.index]
     changeRel = totChange / len(bm.verts)
     print("Change per vertex : {}".format(changeRel))
     

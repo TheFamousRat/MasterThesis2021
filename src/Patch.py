@@ -28,16 +28,16 @@ class Patch:
     samplesCount = sampleRes**2
     centerPatchIdx = (samplesCount // 2) + 1 if ((sampleRes%2) != 0) else ((sampleRes*(sampleRes - 1))//2) + np.array([-1,0,sampleRes-1,sampleRes])
 
-    def __init__(self, bmeshObj, centerVertexIdx, ringsNum):
+    def __init__(self, bmeshObj, centerFaceIdx, ringsNum):
         #Creates a patch, built from a central vertex and its ringsNum neighbouring rings
-        self.centerVertexIdx = centerVertexIdx
+        self.centerFaceIdx = centerFaceIdx
         self.facesCounts = 0
         #self.isValid = True
 
-        self.rings = []
-        self.rings.append([face.index for face in bmeshObj.verts[self.centerVertexIdx].link_faces]) #Ring one, based on the central vertex's neighbourhood
+        self.rings = [[self.centerFaceIdx]]
+        #self.rings.append([face.index for face in bmeshObj.faces[self.centerFaceIdx].link_faces]) #Ring one, based on the central vertex's neighbourhood
 
-        for i in range(1,ringsNum):
+        for i in range(ringsNum):
             self.rings.append([])
             for prevRingFaceIdx in self.rings[-2]:
                 for vert in bmeshObj.faces[prevRingFaceIdx].verts:
@@ -51,6 +51,7 @@ class Patch:
                         if not cond:
                             self.rings[-1].append(linkedFace.index)
                             self.facesCounts += 1
+
 
         #if len(self.rings[0]) == 0:
         #    self.isValid = False
@@ -97,7 +98,7 @@ class Patch:
         maxFaceSize = 0.0
         facesBarycenters = {}
         facesDists = {}
-        centralPos = self.getCentralPos(bmeshObj)
+        centralPos = self.getOrigin(bmeshObj)
 
         for faceIdx in self.getFacesIdxIterator():
             #Calculating the max face area, to normalize face areas later
@@ -143,7 +144,7 @@ class Patch:
         self.eigenVecs[:,2] = self.eigenVecs[:,2] * np.sign(h2)
 
         #Correcting the x-axis
-        centerPos = np.array(bmeshObj.verts[self.centerVertexIdx].co)
+        centerPos = self.getOrigin(bmeshObj)
         xAxis = np.array([0.0, 0.0, 0.0])
         for faceIdx in self.getFacesIdxIterator():
             face = bmeshObj.faces[faceIdx]
@@ -189,18 +190,15 @@ class Patch:
                 ret.add(edge.index)
         return ret
 
-    def getCentralPos(self, bmeshObj):
-        """
-        Returns the position of the patch's central vertex, in model space
-        """
-        return np.array(bmeshObj.verts[self.centerVertexIdx].co)
-
     @staticmethod
     def getFaceBarycenter(face):
         """
         Returns the barycenter of a given face, in model space
         """
         return np.array(face.calc_center_median())
+
+    def getOrigin(self, bmeshObj):
+        return Patch.getFaceBarycenter(bmeshObj.faces[self.centerFaceIdx])
 
     def calculateFaceNormal(self, face):
         """
@@ -327,11 +325,11 @@ class Patch:
         
         ##Rotate the UVs to match local axis
         #Finding a ref
-        linkedEdge = bmeshObj.verts[self.centerVertexIdx].link_edges[0]
-        refVertIdx = (linkedEdge.verts[0] if linkedEdge.verts[0].index != self.centerVertexIdx else linkedEdge.verts[1]).index
+        #linkedEdge = bmeshObj.verts[self.centerVertexIdx].link_edges[0]
+        refVertIdx = self.verticesIdxList[0]#(linkedEdge.verts[0] if linkedEdge.verts[0].index != self.centerVertexIdx else linkedEdge.verts[1]).index
         
         #Projecting that ref onto the plane
-        planeOrigin = np.array(bmeshObj.verts[self.centerVertexIdx].co)
+        planeOrigin = self.getOrigin(bmeshObj)
         vertWorldPos = np.array(bmeshObj.verts[refVertIdx].co)
         vertRelPos = vertWorldPos - planeOrigin
         projCoords = np.array([np.dot(vertRelPos, self.eigenVecs[:,0]), np.dot(vertRelPos, self.eigenVecs[:,1])])
@@ -393,7 +391,7 @@ class Patch:
         """
         Produces a list of position corresponding to samples' origins in the model space
         """
-        planeOrigin = np.array(bmeshObj.verts[self.centerVertexIdx].co)
+        planeOrigin = self.getOrigin(bmeshObj)
         v1 = self.eigenVecs[:,0]
         v2 = self.eigenVecs[:,1]
         
@@ -450,7 +448,7 @@ class Patch:
         """
         Draws in a grease pencil canvas the eigenvectors associated to this patch's normal tensor
         """
-        patchCentralPos = self.getCentralPos(bmeshObj)
+        patchCentralPos = self.getOrigin(bmeshObj)
         for i in range(3):
             if drawAxis[i]:
                 dir = self.eigenVecs[:,i]
