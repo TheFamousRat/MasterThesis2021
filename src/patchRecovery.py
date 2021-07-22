@@ -247,11 +247,14 @@ if len(imageFeatures) == 0:
     ##Extracting the image features (needs to be done only once)
     print("Extracting patch texture features")
     import tensorflow as tf
-    from tensorflow.keras.applications import VGG16
     import ssl
-
     ssl._create_default_https_context = ssl._create_unverified_context
-    model = VGG16(weights='imagenet', include_top=False, input_shape=(64, 64, 3), pooling="max")
+    
+    #from tensorflow.keras.applications import VGG16
+    #model = VGG16(weights='imagenet', include_top=False, input_shape=(64, 64, 3), pooling="max")
+    
+    from tensorflow.keras.applications import ResNet50
+    model = ResNet50(weights='imagenet', include_top=False, input_shape=(64, 64, 3), pooling="max")
 
     formattedPatchPixels = [np.delete(patch.pixels.reshape([1, 64, 64, 4]), 3, 3) for patch in meshPatches]
 
@@ -262,20 +265,20 @@ if len(imageFeatures) == 0:
     imageFeatures = []
     #with tf.device('/gpu:0'):
     imageFeatures = model.predict(allPixels)
-
-    imageFeatures = KernelPCA(n_components = 20, kernel = 'rbf').fit_transform(imageFeatures)
-    imageFeatures = imageFeatures * (1.0 / np.amax(np.linalg.norm(imageFeatures, axis = 1)))
     
     print("Dumping texture features to file...")
     with gzip.open(imageFeaturesPath, 'wb') as f:
         pickle.dump(imageFeatures, f)
     print("Done")
 
+imageFeatures = KernelPCA(n_components = 20, kernel = 'rbf').fit_transform(imageFeatures)
+imageFeatures = imageFeatures * (1.0 / np.amax(np.linalg.norm(imageFeatures, axis = 1)))
+
 #Rest of the logic
 print("===LOGIC START===")
 
 #Utility to export a mesh to a gltf file (to get back on track easily in case of crash)
-def exportToGltf(objToExp, filepath_):
+def exportToObj(objToExp, filepath_):
     for obj in bpy.data.objects:
         obj.select_set(False)
     objToExp.select_set(True)
@@ -285,18 +288,36 @@ def exportToGltf(objToExp, filepath_):
     
     bpy.ops.export_scene.obj(
         filepath=filepath_,
-        use_selection=True
+        use_selection=True,
+        axis_forward='Y', axis_up='Z'
     )
     
     objToExp.matrix_world = matBefore
 
+
+#Creating/setting folder for mesh outputs
+startTimeStamp = int(time.time())
+meshName = selectedObj.name + "_" + str(startTimeStamp) + "_{}.obj"
+meshFolder = os.path.join(testDataFolderPath, selectedObj.name)
+if not os.path.exists(meshFolder):
+    os.makedirs(meshFolder)
+
+meshPath = os.path.join(meshFolder, meshName)
+
 #Starting the denoising iterations
-ITERS_COUNT = 5
+ITERS_COUNT = 1
 CLUSTER_SIZE = 30
-IMAGE_FEATURES_WEIGHT = 0.1
+IMAGE_FEATURES_WEIGHT = 1.0
 USE_GNF = True
 
-for iterNum in range(ITERS_COUNT):
+isDone = False
+iterNum = -1
+while not isDone:
+    iterData = {}
+    iterNum += 1
+    
+    startTot = time.time()
+    
     print("Iteration number {}".format(iterNum+1))
     ##Topological features
     print("Building the neighborhood system")
@@ -308,6 +329,8 @@ for iterNum in range(ITERS_COUNT):
     kdt = KDTree(allFeatures,  leaf_size = CLUSTER_SIZE, metric = 'euclidean')
     
     ##Performing recovery on each patch
+    startLRR = time.time()
+    
     recoveredNormals = {}
     bar = Bar('Performing low-rank recovery', max=len(meshPatches))
     for patchIdx in range(len(meshPatches)):
@@ -328,7 +351,8 @@ for iterNum in range(ITERS_COUNT):
         patchNormals = np.array([np.average((recoveredMat[:,i]).reshape(Patch.Patch.samplesCount,3), axis = 0) for i in range(CLUSTER_SIZE)])
         patchNormals = patchNormals / np.linalg.norm(patchNormals, axis=1)[:,np.newaxis]
         
-        newNormal = patch.eigenVecs @ patchNormals[np.argsort(np.arccos(np.dot(patchNormals, origNormal)))[CLUSTER_SIZE // 2]]
+        clampedDotProds = np.maximum(-1.0, np.minimum(1.0, np.dot(patchNormals, origNormal)))
+        newNormal = patch.eigenVecs @ patchNormals[np.argsort(np.arccos(clampedDotProds))[CLUSTER_SIZE // 2]]
         
         #avg = np.average((recoveredMat[:,0]).reshape(Patch.Patch.samplesCount,3), axis = 0)
         #newNormal = patch.eigenVecs @ (avg / np.linalg.norm(avg))
@@ -337,6 +361,9 @@ for iterNum in range(ITERS_COUNT):
         bar.next()
     print("\n")
     
+    endLRR = time.time()
+    iterData['timeLRR'] = endLRR - startLRR
+    
     #Applying bilateral normal filtering on the recovered normals
     filteredNormals = {}
     
@@ -344,10 +371,12 @@ for iterNum in range(ITERS_COUNT):
         filteredNormals = recoveredNormals
     else:
         
+        startGNF = time.time()
+        
         tempNormals = {patch.centerFaceIdx : recoveredNormals[patch.centerFaceIdx] for patch in meshPatches}
         itersNum = 3
         
-        bar = Bar('Performing normal filtering', max=len(itersNum))
+        bar = Bar('Performing normal filtering', max=itersNum)
         for iii in range(3):
             sigmaS = 2.0 * (0.2)
             sigmaR = 2.0 * (avgEdgeLen)
@@ -356,11 +385,6 @@ for iterNum in range(ITERS_COUNT):
                 patchCenter = patch.getOrigin(bm)
                 patchNormal = tempNormals[patch.centerFaceIdx]
                 
-                #for neighFaceIdx in patch.rings[1]:
-                #    neighFace = bm.faces[neighFaceIdx]
-                #    faceBary = Patch.Patch.getFaceBarycenter(neighFace)
-                #    faceNormal = tempNormals[neighFaceIdx]
-                #    filteredNormal += neighFace.calc_area() * math.exp(-(np.linalg.norm(faceBary - patchCenter)**2.0)/sigmaS) * math.exp(-(np.linalg.norm(faceNormal - patchNormal)**2.0)/sigmaR) * faceNormal
                 weightedNormals = [bm.faces[neighFaceIdx].calc_area() * math.exp(-(np.linalg.norm(Patch.Patch.getFaceBarycenter(bm.faces[neighFaceIdx]) - patchCenter)**2.0)/sigmaS) * math.exp(-(np.linalg.norm(tempNormals[neighFaceIdx] - patchNormal)**2.0)/sigmaR) * tempNormals[neighFaceIdx] for neighFaceIdx in patch.rings[1]] 
                 filteredNormal = np.sum(weightedNormals, axis = 0)
                 
@@ -375,6 +399,9 @@ for iterNum in range(ITERS_COUNT):
             bar.next()
         
         print("\n")
+        
+        endGNF = time.time()
+        iterData['timeGNF'] = endGNF - startGNF
     
     if False:
         #Debug drawing
@@ -385,6 +412,8 @@ for iterNum in range(ITERS_COUNT):
             debugDrawing.draw_line(gpencil, gp_frame, (centerPos, centerPos + 0.02 * dir), (0.5, 3.0), "00ffff")
     
     #Correcting vertex positions
+    startPosUpdt = time.time()
+    
     newPos = {}
 
     print("Updating vertex positions")
@@ -409,31 +438,28 @@ for iterNum in range(ITERS_COUNT):
         
         newPos[vert.index] = vertexPos + disp 
 
+    endPosUpdt = time.time()
+    iterData['timePosUdpt'] = endPosUpdt - startPosUpdt
+
     #Applying new positions
     totChange = 0.0
+    vertMoveWeight = {vert.index : 1.0 / sum([face.calc_area() for face in vert.link_faces]) for vert in bm.verts}
     for vert in bm.verts:
-        totChange += np.linalg.norm(np.array(vert.co) - newPos[vert.index]) / sum([face.calc_area() for face in vert.link_faces])
+        totChange += np.linalg.norm(np.array(vert.co) - newPos[vert.index]) * vertMoveWeight[vert.index]
         vert.co = newPos[vert.index]
-    changeRel = totChange / len(bm.verts)
-    print("Change per vertex : {}".format(changeRel))
+    changeRel = (totChange / sum(vertMoveWeight.values())) / len(bm.verts)
     
-    #Saving the change this iteration for this mesh
-    testsData[selectedObj.name].append(changeRel)
+    iterData['changeRel'] = changeRel
     
     print("Updating mesh representation in Blender...")
     bmesh.update_edit_mesh(bpy.context.active_object.data)
     
     print("Export mesh at this step")
-    exportName = "{}_backup.obj".format(selectedObj.name, iterNum)
-    exportPath = os.path.join(testDataFolderPath, exportName)
-    exportToGltf(selectedObj, exportPath)
+    exportToObj(selectedObj, meshPath.format(iterNum))
     
-    print("Checking convergence")
-    converged = ((iterNum + 1) == ITERS_COUNT)
-    
-    if converged:
-        print("Convergence reached")
-        break
+    if ((iterNum + 1) == ITERS_COUNT):
+        print("Maximum number of iterations reached")
+        isDone = True
     else:
         #The process is not done or converged yet, we thus update the patches info with the new mesh
         bpy.ops.object.mode_set(mode='EDIT')
@@ -444,6 +470,14 @@ for iterNum in range(ITERS_COUNT):
             patch.computeProperties(bm)
             bar.next()
         print("\n")
+        
+    endTot = time.time()
+    iterData['timeTot'] = endTot - startTot
+    
+    #Saving the change this iteration for this mesh
+    testsData[selectedObj.name].append(iterData)
+    
+    print("Data this iteration : {}".format(iterData))
     
 print("Saving test data...")
 with open(testDataJsonPath, 'w') as f:
