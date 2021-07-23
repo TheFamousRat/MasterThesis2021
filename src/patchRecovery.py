@@ -77,8 +77,7 @@ def intToSignedBitList(val, bitsAmount):
 
 def retrieveBakedData(bakedDataPath, integrityCheckFunction, sourceDataIdx, dataBakingFunction, receiverArray):
     """
-    
-    
+    Handles the loading and, if necessary, sequential rebaking of data with a high computation cost
     """
     rebuiltData = False
     
@@ -254,24 +253,25 @@ if len(imageFeatures) == 0:
     #model = VGG16(weights='imagenet', include_top=False, input_shape=(64, 64, 3), pooling="max")
     
     from tensorflow.keras.applications import ResNet50
-    model = ResNet50(weights='imagenet', include_top=False, input_shape=(64, 64, 3), pooling="max")
-
-    formattedPatchPixels = [np.delete(patch.pixels.reshape([1, 64, 64, 4]), 3, 3) for patch in meshPatches]
-
-    allPixels = np.concatenate(formattedPatchPixels)
-    allPixels = tf.convert_to_tensor(allPixels, dtype = tf.float32)
-    allPixels = ((allPixels / 255.0) * 2.0) - 1.0
+    model = ResNet50(weights='imagenet', include_top=False, input_shape=(Patch.Patch.bakedImgSize, Patch.Patch.bakedImgSize, 3), pooling="max")
+    
+    formattedPatchPixels = np.array([np.delete(patch.pixels.reshape([64, 64, 4]), 2, 2) for patch in meshPatches])
+    formattedPatchPixels = tf.keras.applications.resnet50.preprocess_input(formattedPatchPixels)
 
     imageFeatures = []
     #with tf.device('/gpu:0'):
-    imageFeatures = model.predict(allPixels)
+    imageFeatures = model.predict(formattedPatchPixels)
     
     print("Dumping texture features to file...")
     with gzip.open(imageFeaturesPath, 'wb') as f:
         pickle.dump(imageFeatures, f)
     print("Done")
 
-imageFeatures = KernelPCA(n_components = 20, kernel = 'rbf').fit_transform(imageFeatures)
+
+from sklearn.decomposition import PCA
+
+#imageFeatures = KernelPCA(n_components = 20, kernel = 'rbf').fit_transform(imageFeatures)
+imageFeatures = PCA(n_components=50).fit_transform(imageFeatures)
 imageFeatures = imageFeatures * (1.0 / np.amax(np.linalg.norm(imageFeatures, axis = 1)))
 
 #Rest of the logic
@@ -307,7 +307,7 @@ meshPath = os.path.join(meshFolder, meshName)
 #Starting the denoising iterations
 ITERS_COUNT = 1
 CLUSTER_SIZE = 30
-IMAGE_FEATURES_WEIGHT = 1.0
+IMAGE_FEATURES_WEIGHT = 10.0
 USE_GNF = True
 
 isDone = False
@@ -374,28 +374,41 @@ while not isDone:
         startGNF = time.time()
         
         tempNormals = {patch.centerFaceIdx : recoveredNormals[patch.centerFaceIdx] for patch in meshPatches}
-        itersNum = 3
+        maxItersGNF = 3
+        epsGNF = 1e-2
+        sigmaS = 2.0 * (0.2)
+        sigmaR = 2.0 * (avgEdgeLen)
         
-        bar = Bar('Performing normal filtering', max=itersNum)
-        for iii in range(3):
-            sigmaS = 2.0 * (0.2)
-            sigmaR = 2.0 * (avgEdgeLen)
+        bar = Bar('Performing normal filtering', max=maxItersGNF)
+        iterNumGNF = 0
+        while True:
+            iterNumGNF += 1
             
             for patch in meshPatches:
                 patchCenter = patch.getOrigin(bm)
                 patchNormal = tempNormals[patch.centerFaceIdx]
                 
                 weightedNormals = [bm.faces[neighFaceIdx].calc_area() * math.exp(-(np.linalg.norm(Patch.Patch.getFaceBarycenter(bm.faces[neighFaceIdx]) - patchCenter)**2.0)/sigmaS) * math.exp(-(np.linalg.norm(tempNormals[neighFaceIdx] - patchNormal)**2.0)/sigmaR) * tempNormals[neighFaceIdx] for neighFaceIdx in patch.rings[1]] 
-                filteredNormal = np.sum(weightedNormals, axis = 0)
+                filteredNormal = np.real(np.sum(weightedNormals, axis = 0))
                 
                 filteredNormals[patch.centerFaceIdx] = filteredNormal / np.linalg.norm(filteredNormal)
             
             tot = 0.0
             for faceIdx in tempNormals:
                 tot += np.linalg.norm(tempNormals[faceIdx] - filteredNormals[faceIdx])
-            print(tot / len(meshPatches))
+            avgTot = tot / len(meshPatches)
                 
             tempNormals = copy.deepcopy(filteredNormals)
+            
+            print(avgTot)
+            
+            if avgTot < epsGNF:
+                print("Normal filtering converged, stopping")
+                break
+            elif iterNumGNF == maxItersGNF:
+                print("Maximum number of normal filtering iterations reached")
+                break
+            
             bar.next()
         
         print("\n")
@@ -429,8 +442,10 @@ while not isDone:
             
             #Parsing the faces linked to that edge (and thus also neighboring the central vertex)
             for linkedFace in neighEdge.link_faces:
-                faceBarycenter = np.array(linkedFace.calc_center_median())
                 faceNormal = filteredNormals[linkedFace.index]
+                
+                print(recoveredNormals[linkedFace.index])
+                print(filteredNormals[linkedFace.index])
                 
                 disp += faceNormal * np.dot(faceNormal, np.array(otherVert.co) - vertexPos)
         
