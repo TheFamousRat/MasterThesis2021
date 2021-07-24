@@ -285,7 +285,7 @@ class Patch:
             for loop in vert.link_loops:
                 loop[bmeshObj.loops.layers.uv[Patch.uvLayerName]].uv = Patch.uvExclusionPoint
 
-    def createCenteredUVMap(self, bmeshObj):
+    def createCenteredUVMap(self, bmeshObj, recenter = True, unrotate = True):
         """
         UV unwrapping the patch
         """
@@ -311,45 +311,48 @@ class Patch:
         for faceIdx in self.getFacesIdxIterator():
             bmeshObj.faces[faceIdx].select = False
 
+        uvMapCenter = np.array([0.5, 0.5])
+
         self.verticesUVs = {vIdx : np.array(self.getVertUV(bmeshObj, vIdx, Patch.uvLayerName)) for vIdx in self.verticesIdxList}
 
-        #Center the UVs (so that the central vertex is at pos (0.5,0.5)
-        w = np.array([bmeshObj.faces[faceIdx].calc_area() for faceIdx in self.getFacesIdxIterator()])
-        facesUVBarycenters = [np.average([self.verticesUVs[vert.index] for vert in bmeshObj.faces[faceIdx].verts], axis = 0) for faceIdx in self.getFacesIdxIterator()]
-        weightedBarycenter = np.average(facesUVBarycenters, axis = 0, weights = w)
-        uvMapCenter = np.array([0.5, 0.5])
-        posShift = uvMapCenter - weightedBarycenter
+        #Center the UVs (so that the area-weighted centroid is at pos uvMapCenter)
+        if recenter:
+            w = np.array([bmeshObj.faces[faceIdx].calc_area() for faceIdx in self.getFacesIdxIterator()])
+            facesUVBarycenters = [np.average([self.verticesUVs[vert.index] for vert in bmeshObj.faces[faceIdx].verts], axis = 0) for faceIdx in self.getFacesIdxIterator()]
+            weightedBarycenter = np.average(facesUVBarycenters, axis = 0, weights = w)
+            posShift = uvMapCenter - weightedBarycenter
 
-        for vIdx in self.verticesIdxList:
-            self.verticesUVs[vIdx] = self.verticesUVs[vIdx] + posShift
+            for vIdx in self.verticesIdxList:
+                self.verticesUVs[vIdx] = self.verticesUVs[vIdx] + posShift
         
         ##Rotate the UVs to match local axis
-        #Finding a ref
-        #linkedEdge = bmeshObj.verts[self.centerVertexIdx].link_edges[0]
-        refVertIdx = self.verticesIdxList[0]#(linkedEdge.verts[0] if linkedEdge.verts[0].index != self.centerVertexIdx else linkedEdge.verts[1]).index
-        
-        #Projecting that ref onto the plane
-        planeOrigin = self.getOrigin(bmeshObj)
-        vertWorldPos = np.array(bmeshObj.verts[refVertIdx].co)
-        vertRelPos = vertWorldPos - planeOrigin
-        projCoords = np.array([np.dot(vertRelPos, self.eigenVecs[:,0]), np.dot(vertRelPos, self.eigenVecs[:,1])])
+        if unrotate:
+            #Finding a ref
+            #linkedEdge = bmeshObj.verts[self.centerVertexIdx].link_edges[0]
+            refVertIdx = self.verticesIdxList[0]#(linkedEdge.verts[0] if linkedEdge.verts[0].index != self.centerVertexIdx else linkedEdge.verts[1]).index
+            
+            #Projecting that ref onto the plane
+            planeOrigin = self.getOrigin(bmeshObj)
+            vertWorldPos = np.array(bmeshObj.verts[refVertIdx].co)
+            vertRelPos = vertWorldPos - planeOrigin
+            projCoords = np.array([np.dot(vertRelPos, self.eigenVecs[:,0]), np.dot(vertRelPos, self.eigenVecs[:,1])])
 
-        #Angle between the projection and the x-axis (in the world plane)
-        angleWorld = math.atan2(projCoords[1], projCoords[0])
+            #Angle between the projection and the x-axis (in the world plane)
+            angleWorld = math.atan2(projCoords[1], projCoords[0])
 
-        #xAxis in the UV map
-        refVecUV = np.matrix(self.verticesUVs[refVertIdx]).T
-        centerVec = np.matrix(uvMapCenter).T
-        centeredRefUV = refVecUV - centerVec
-        angleUV = math.atan2(centeredRefUV[1], centeredRefUV[0])
-        
-        #Rotation matrix
-        angleDiff = angleWorld - angleUV
-        rotMat = np.matrix([[math.cos(angleDiff), -math.sin(angleDiff)],[math.sin(angleDiff), math.cos(angleDiff)]])
-        
-        #Rotate around the central vec
-        for vIdx in self.verticesIdxList:
-            self.verticesUVs[vIdx] = (rotMat @ (np.matrix(self.verticesUVs[vIdx]).T - centerVec)) + centerVec
+            #xAxis in the UV map
+            refVecUV = np.matrix(self.verticesUVs[refVertIdx]).T
+            centerVec = np.matrix(uvMapCenter).T
+            centeredRefUV = refVecUV - centerVec
+            angleUV = math.atan2(centeredRefUV[1], centeredRefUV[0])
+            
+            #Rotation matrix
+            angleDiff = angleWorld - angleUV
+            rotMat = np.matrix([[math.cos(angleDiff), -math.sin(angleDiff)],[math.sin(angleDiff), math.cos(angleDiff)]])
+            
+            #Rotate around the central vec
+            for vIdx in self.verticesIdxList:
+                self.verticesUVs[vIdx] = (rotMat @ (np.matrix(self.verticesUVs[vIdx]).T - centerVec)) + centerVec
 
     def computeUVMapSurface(self, bmeshObj):
         """
@@ -365,6 +368,10 @@ class Patch:
         return area
 
     def applyUVMap(self, bmeshObj):
+        for vert in bmeshObj.verts:
+            for loop in vert.link_loops:
+                loop[bmeshObj.loops.layers.uv[Patch.uvLayerName]].uv = Patch.uvExclusionPoint
+
         for vIdx in self.verticesIdxList:
             self.setVertUV(bmeshObj, vIdx, Patch.uvLayerName, self.verticesUVs[vIdx])
 
@@ -376,16 +383,16 @@ class Patch:
         self.applyUVMap(bmeshObj)
         
         #Bake
-        bpy.ops.object.bake(type='DIFFUSE', pass_filter = {'COLOR'}, use_clear = True, margin = Patch.textureMargin)#
+        bpy.ops.object.bake(type='DIFFUSE', pass_filter = {'COLOR'}, use_clear = True, margin = Patch.textureMargin)
 
         #Save image
         self.pixels = np.array(bpy.data.images[Patch.bakedImgName].pixels[:], dtype=np.float16)
 
         #Remove UVs from sight
-        for vertIdx in self.verticesIdxList:
-            vert = bmeshObj.verts[vertIdx]
-            for loop in vert.link_loops:
-                loop[bmeshObj.loops.layers.uv[Patch.uvLayerName]].uv = Patch.uvExclusionPoint
+        #for vertIdx in self.verticesIdxList:
+        #    vert = bmeshObj.verts[vertIdx]
+        #    for loop in vert.link_loops:
+        #        loop[bmeshObj.loops.layers.uv[Patch.uvLayerName]].uv = Patch.uvExclusionPoint
 
     def getNormalSamplesPosition(self, bmeshObj):
         """

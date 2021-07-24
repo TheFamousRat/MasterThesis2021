@@ -202,6 +202,21 @@ for i in range(len(meshPatches)):
     patch.verticesUVs = UVMaps[i]
 print("Done")
 
+patch = meshPatches[3722]
+
+bools = [[False, False], [True, False], [True, True]]
+for i in range(3):
+    patch.createCenteredUVMap(bm, i > 0, i > 1)
+    patch.applyUVMap(bm)
+
+for faceIdx in patch.getFacesIdxIterator():
+    bm.faces[faceIdx].select = True
+
+for patch in meshPatches:
+    patch.drawLRF(gpencil, gp_frame, bm)
+
+raise Exception("Test")
+
 #Textures
 print("---Textures sampling---")
 
@@ -307,8 +322,10 @@ meshPath = os.path.join(meshFolder, meshName)
 #Starting the denoising iterations
 ITERS_COUNT = 1
 CLUSTER_SIZE = 30
-IMAGE_FEATURES_WEIGHT = 10.0
+IMAGE_FEATURES_WEIGHT = 0.5
 USE_GNF = True
+GNF_ITERS_MAX = 3
+VERT_UPDT_ITERS_MAX = 1
 
 isDone = False
 iterNum = -1
@@ -349,7 +366,7 @@ while not isDone:
         
         origNormal = np.array(bm.faces[patch.centerFaceIdx].normal)
         patchNormals = np.array([np.average((recoveredMat[:,i]).reshape(Patch.Patch.samplesCount,3), axis = 0) for i in range(CLUSTER_SIZE)])
-        patchNormals = patchNormals / np.linalg.norm(patchNormals, axis=1)[:,np.newaxis]
+        patchNormals = np.real(patchNormals / np.linalg.norm(patchNormals, axis=1)[:,np.newaxis])
         
         clampedDotProds = np.maximum(-1.0, np.minimum(1.0, np.dot(patchNormals, origNormal)))
         newNormal = patch.eigenVecs @ patchNormals[np.argsort(np.arccos(clampedDotProds))[CLUSTER_SIZE // 2]]
@@ -357,7 +374,7 @@ while not isDone:
         #avg = np.average((recoveredMat[:,0]).reshape(Patch.Patch.samplesCount,3), axis = 0)
         #newNormal = patch.eigenVecs @ (avg / np.linalg.norm(avg))
         
-        recoveredNormals[patch.centerFaceIdx] = newNormal 
+        recoveredNormals[patch.centerFaceIdx] = newNormal
         bar.next()
     print("\n")
     
@@ -374,12 +391,11 @@ while not isDone:
         startGNF = time.time()
         
         tempNormals = {patch.centerFaceIdx : recoveredNormals[patch.centerFaceIdx] for patch in meshPatches}
-        maxItersGNF = 3
         epsGNF = 1e-2
         sigmaS = 2.0 * (0.2)
         sigmaR = 2.0 * (avgEdgeLen)
         
-        bar = Bar('Performing normal filtering', max=maxItersGNF)
+        bar = Bar('Performing normal filtering', max=GNF_ITERS_MAX)
         iterNumGNF = 0
         while True:
             iterNumGNF += 1
@@ -389,7 +405,7 @@ while not isDone:
                 patchNormal = tempNormals[patch.centerFaceIdx]
                 
                 weightedNormals = [bm.faces[neighFaceIdx].calc_area() * math.exp(-(np.linalg.norm(Patch.Patch.getFaceBarycenter(bm.faces[neighFaceIdx]) - patchCenter)**2.0)/sigmaS) * math.exp(-(np.linalg.norm(tempNormals[neighFaceIdx] - patchNormal)**2.0)/sigmaR) * tempNormals[neighFaceIdx] for neighFaceIdx in patch.rings[1]] 
-                filteredNormal = np.real(np.sum(weightedNormals, axis = 0))
+                filteredNormal = np.sum(weightedNormals, axis = 0)
                 
                 filteredNormals[patch.centerFaceIdx] = filteredNormal / np.linalg.norm(filteredNormal)
             
@@ -405,7 +421,7 @@ while not isDone:
             if avgTot < epsGNF:
                 print("Normal filtering converged, stopping")
                 break
-            elif iterNumGNF == maxItersGNF:
+            elif iterNumGNF == GNF_ITERS_MAX:
                 print("Maximum number of normal filtering iterations reached")
                 break
             
@@ -428,30 +444,32 @@ while not isDone:
     startPosUpdt = time.time()
     
     newPos = {}
-
+    tempPos = {vert.index : np.array(vert.co) for vert in bm.verts}
     print("Updating vertex positions")
-    for vert in bm.verts:
-        vertexPos = np.array(vert.co)
-        
-        disp = np.array([0.0, 0.0, 0.0])
-        
-        #Finding every neighbouring vertex by using linked edge
-        for neighEdge in vert.link_edges:
-            #Finding the neighboring vertex
-            otherVert = neighEdge.verts[0 if list(neighEdge.verts)[0] != vert else 1]
+    
+    for iii in range(VERT_UPDT_ITERS_MAX):
+        for vert in bm.verts:
+            vertexPos = tempPos[vert.index]
             
-            #Parsing the faces linked to that edge (and thus also neighboring the central vertex)
-            for linkedFace in neighEdge.link_faces:
-                faceNormal = filteredNormals[linkedFace.index]
+            disp = np.array([0.0, 0.0, 0.0])
+            
+            #Finding every neighbouring vertex by using linked edge
+            for neighEdge in vert.link_edges:
+                #Finding the neighboring vertex
+                otherVert = neighEdge.verts[0 if list(neighEdge.verts)[0] != vert else 1]
                 
-                print(recoveredNormals[linkedFace.index])
-                print(filteredNormals[linkedFace.index])
-                
-                disp += faceNormal * np.dot(faceNormal, np.array(otherVert.co) - vertexPos)
-        
-        disp = (1.0/(3.0 * len(vert.link_faces))) * disp
-        
-        newPos[vert.index] = vertexPos + disp 
+                #Parsing the faces linked to that edge (and thus also neighboring the central vertex)
+                for linkedFace in neighEdge.link_faces:
+                    faceNormal = filteredNormals[linkedFace.index]
+                    
+                    disp += faceNormal * np.dot(faceNormal, tempPos[otherVert.index] - vertexPos)
+            
+            disp = (1.0/(3.0 * len(vert.link_faces))) * disp
+            
+            newPos[vert.index] = vertexPos + disp 
+    
+        tempPos = copy.deepcopy(newPos)
+    
 
     endPosUpdt = time.time()
     iterData['timePosUdpt'] = endPosUpdt - startPosUpdt
