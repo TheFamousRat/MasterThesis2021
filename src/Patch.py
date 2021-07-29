@@ -21,6 +21,7 @@ class Patch:
     imageNodeName = "BakedTextureNode"
     uvLayerNodeName = "BakedUVLayerNode"
     uvExclusionPoint = np.array([2.0, 2.0]) #Location where the UV not to be used are isolated
+    uvMapCenter = np.array([0.5, 0.5])
     textureMargin = 1
     #Related to patch sampling
     planeScale = 0.05
@@ -134,37 +135,39 @@ class Patch:
         #The signs of the eigenvectors are unreliable here and will be corrected
         self.eigenVals, self.eigenVecs = la.eigh(normalsCovMat)
 
-        #Implementing a proposition by Sheng Ao et al. 2019 "A repeatable and robust local reference frame for 3D surface matching"
-        #Correcting the z-axis (normal)
-        h2 = 0.0
-        for faceIdx in self.getFacesIdxIterator():
-            face = bmeshObj.faces[faceIdx]
-            h2 += np.dot(face.normal, self.eigenVecs[:,2]) * faceWeights[faceIdx]
+        if True:
+            #Implementing a proposition by Sheng Ao et al. 2019 "A repeatable and robust local reference frame for 3D surface matching"
+            #Correcting the z-axis (normal)
+            h2 = 0.0
+            for faceIdx in self.getFacesIdxIterator():
+                face = bmeshObj.faces[faceIdx]
+                h2 += np.dot(face.normal, self.eigenVecs[:,2]) * faceWeights[faceIdx]
 
-        self.eigenVecs[:,2] = self.eigenVecs[:,2] * np.sign(h2)
+            self.eigenVecs[:,2] = self.eigenVecs[:,2] * np.sign(h2)
 
-        #Correcting the x-axis
-        centerPos = self.getOrigin(bmeshObj)
-        xAxis = np.array([0.0, 0.0, 0.0])
-        for faceIdx in self.getFacesIdxIterator():
-            face = bmeshObj.faces[faceIdx]
-            facePos = Patch.getFaceBarycenter(bmeshObj.faces[faceIdx])
-            faceCenterVec = facePos - centerPos
-            dot_zProj = np.dot(self.eigenVecs[:,2], faceCenterVec)
-            
-            faceProjRel = faceCenterVec - self.eigenVecs[:,2] * dot_zProj
-            
-            #w1 = math.exp(-(np.linalg.norm(faceCenterVec)**2.0)*3.0)
-            w2 = dot_zProj**(2.0)
-            #w3 = bmeshObj.faces[faceIdx].calc_area()
-            xAxis += w2 * faceWeights[faceIdx] * (faceProjRel)
-
-        #Finally get the y-axis from the other two corrected vectors and normalizing them
-        self.eigenVecs[:,0] = xAxis#np.cross(self.eigenVecs[:,1], self.eigenVecs[:,2])
-        self.eigenVecs[:,0] = self.eigenVecs[:,0] / np.linalg.norm(self.eigenVecs[:,0])
-        self.eigenVecs[:,1] = -np.cross(self.eigenVecs[:,0], self.eigenVecs[:,2])
-        self.eigenVecs[:,1] = self.eigenVecs[:,1] / np.linalg.norm(self.eigenVecs[:,1])
         
+            #Correcting the x-axis
+            centerPos = self.getOrigin(bmeshObj)
+            xAxis = np.array([0.0, 0.0, 0.0])
+            for faceIdx in self.getFacesIdxIterator():
+                face = bmeshObj.faces[faceIdx]
+                facePos = Patch.getFaceBarycenter(bmeshObj.faces[faceIdx])
+                faceCenterVec = facePos - centerPos
+                dot_zProj = np.dot(self.eigenVecs[:,2], faceCenterVec)
+                
+                faceProjRel = faceCenterVec - self.eigenVecs[:,2] * dot_zProj
+                
+                #w1 = math.exp(-(np.linalg.norm(faceCenterVec)**2.0)*3.0)
+                w2 = dot_zProj**(2.0)
+                #w3 = bmeshObj.faces[faceIdx].calc_area()
+                xAxis += w2 * faceWeights[faceIdx] * (faceProjRel)
+
+            #Finally get the y-axis from the other two corrected vectors and normalizing them
+            self.eigenVecs[:,0] = xAxis#self.eigenVecs[:,0] if np.dot(self.eigenVecs[:,0], xAxis) >= 0.0 else -self.eigenVecs[:,0]#np.cross(self.eigenVecs[:,1], self.eigenVecs[:,2])
+            self.eigenVecs[:,0] = self.eigenVecs[:,0] / np.linalg.norm(self.eigenVecs[:,0])
+            self.eigenVecs[:,1] = -np.cross(self.eigenVecs[:,0], self.eigenVecs[:,2])
+            self.eigenVecs[:,1] = self.eigenVecs[:,1] / np.linalg.norm(self.eigenVecs[:,1])
+            
         self.rotMatInv = np.linalg.inv(self.eigenVecs)
     
     def getFacesIdxIterator(self):
@@ -311,8 +314,6 @@ class Patch:
         for faceIdx in self.getFacesIdxIterator():
             bmeshObj.faces[faceIdx].select = False
 
-        uvMapCenter = np.array([0.5, 0.5])
-
         self.verticesUVs = {vIdx : np.array(self.getVertUV(bmeshObj, vIdx, Patch.uvLayerName)) for vIdx in self.verticesIdxList}
 
         #Center the UVs (so that the area-weighted centroid is at pos uvMapCenter)
@@ -320,7 +321,7 @@ class Patch:
             w = np.array([bmeshObj.faces[faceIdx].calc_area() for faceIdx in self.getFacesIdxIterator()])
             facesUVBarycenters = [np.average([self.verticesUVs[vert.index] for vert in bmeshObj.faces[faceIdx].verts], axis = 0) for faceIdx in self.getFacesIdxIterator()]
             weightedBarycenter = np.average(facesUVBarycenters, axis = 0, weights = w)
-            posShift = uvMapCenter - weightedBarycenter
+            posShift = Patch.uvMapCenter - weightedBarycenter
 
             for vIdx in self.verticesIdxList:
                 self.verticesUVs[vIdx] = self.verticesUVs[vIdx] + posShift
@@ -342,7 +343,7 @@ class Patch:
 
             #xAxis in the UV map
             refVecUV = np.matrix(self.verticesUVs[refVertIdx]).T
-            centerVec = np.matrix(uvMapCenter).T
+            centerVec = np.matrix(Patch.uvMapCenter).T
             centeredRefUV = refVecUV - centerVec
             angleUV = math.atan2(centeredRefUV[1], centeredRefUV[0])
             
@@ -352,20 +353,15 @@ class Patch:
             
             #Rotate around the central vec
             for vIdx in self.verticesIdxList:
-                self.verticesUVs[vIdx] = (rotMat @ (np.matrix(self.verticesUVs[vIdx]).T - centerVec)) + centerVec
+                self.verticesUVs[vIdx] = np.asarray((rotMat @ (np.matrix(self.verticesUVs[vIdx]).T - centerVec)) + centerVec)
 
-    def computeUVMapSurface(self, bmeshObj):
-        """
-        Calculates the surface area of the UV map
-        """
-        area = 0.0
-        
-        #Summing the triangle area of each triangle's UV projection
-        for faceIdx in self.getFacesIdxIterator():
-            faceVertsIdx = [vert.index for vert in bmeshObj.faces[faceIdx].verts]
-            area += np.linalg.norm(np.cross((self.verticesUVs[faceVertsIdx[0]] - self.verticesUVs[faceVertsIdx[1]]).T, (self.verticesUVs[faceVertsIdx[0]] - self.verticesUVs[faceVertsIdx[2]]).T))/2.0
-        
-        return area
+    def getUVMapSurface(self, bmeshObj):
+        return np.sum([np.cross(self.verticesUVs[face.verts[0].index] - self.verticesUVs[face.verts[1].index], self.verticesUVs[face.verts[0].index] - self.verticesUVs[face.verts[2].index], axis = 0)[0] / 2.0 for face in [bmeshObj.faces[faceIdx] for faceIdx in self.getFacesIdxIterator()]])
+
+    def scaleUVMap(self, scaleFac):
+        cntr = Patch.uvMapCenter.reshape(2,1)
+        for vIdx in self.verticesUVs:
+            self.verticesUVs[vIdx] = scaleFac * (self.verticesUVs[vIdx] - cntr) + cntr
 
     def applyUVMap(self, bmeshObj):
         for vert in bmeshObj.verts:

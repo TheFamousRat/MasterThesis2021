@@ -30,6 +30,10 @@ import copy
 #Storing test data
 import json
 
+from scipy.spatial.distance import pdist
+import random
+
+
 ##Local libraries (re-)loading
 #Loading user-defined modules (subject to frequent changes and needed reloading)
 pathsToAdd = ["/home/home/thefamousrat/Documents/KU Leuven/Master Thesis/MasterThesis2021/src"]
@@ -136,6 +140,7 @@ bpy.ops.mesh.select_mode(type='VERT')
 bpy.ops.mesh.select_all(action='SELECT')
 bpy.ops.mesh.delete_loose()
 bpy.ops.mesh.select_all(action='DESELECT')
+bpy.ops.mesh.select_mode(type='FACE') 
        
 bm, avgEdgeLen = createBMesh(selectedObj.data)
 
@@ -177,6 +182,7 @@ meshPatches = []
 patchesDataPath = os.path.join(meshDataPath, 'patches.pkl')
 retrieveBakedData(patchesDataPath, checkPatchIntegrity, [f.index for f in bm.faces], createVertexPatch, meshPatches)
 meshPatches = meshPatches[0]
+faceToPatches = {patch.centerFaceIdx : patch for patch in meshPatches} #Dict linking a mesh face idx to its face patch
 
 #UV map
 print("---UV map---")
@@ -202,20 +208,27 @@ for i in range(len(meshPatches)):
     patch.verticesUVs = UVMaps[i]
 print("Done")
 
-patch = meshPatches[3722]
+print("Ensuring homogeneous UV map scale")
+uvMapDensities = [meshPatches[i].totalArea / meshPatches[i].getUVMapSurface(bm) for i in range(len(meshPatches))]
+minDens = np.amin(uvMapDensities)
 
-bools = [[False, False], [True, False], [True, True]]
-for i in range(3):
-    patch.createCenteredUVMap(bm, i > 0, i > 1)
-    patch.applyUVMap(bm)
+for i in range(len(meshPatches)):
+    patch = meshPatches[i]
+    patch.scaleUVMap(math.sqrt(0.5 * uvMapDensities[i] / minDens))
 
-for faceIdx in patch.getFacesIdxIterator():
-    bm.faces[faceIdx].select = True
+surfaces = [patch.getUVMapSurface(bm) for patch in meshPatches] 
+print(np.amax(surfaces))
+print(np.amin(surfaces))
 
-for patch in meshPatches:
-    patch.drawLRF(gpencil, gp_frame, bm)
+img = bpy.data.images['bakedImage']
+for i in [691, 683, 673, 674, 672, 590, 589, 687, 690]:
+    patch = faceToPatches[i]
+    Patch.Patch.setupBakingEnvironment(bm)
+    patch.bakePatchTexture(bm)
+    img.pixels = list(patch.pixels[:])
+    img.save_render('PatchBakingSamples/{}.png'.format(i))
 
-raise Exception("Test")
+raise Exception("Caca")
 
 #Textures
 print("---Textures sampling---")
@@ -259,7 +272,6 @@ if (not rebuiltData) and os.path.exists(imageFeaturesPath):
 
 if len(imageFeatures) == 0:
     ##Extracting the image features (needs to be done only once)
-    print("Extracting patch texture features")
     import tensorflow as tf
     import ssl
     ssl._create_default_https_context = ssl._create_unverified_context
@@ -282,11 +294,11 @@ if len(imageFeatures) == 0:
         pickle.dump(imageFeatures, f)
     print("Done")
 
-
 from sklearn.decomposition import PCA
 
 #imageFeatures = KernelPCA(n_components = 20, kernel = 'rbf').fit_transform(imageFeatures)
-imageFeatures = PCA(n_components=50).fit_transform(imageFeatures)
+pca = PCA(n_components=50)
+imageFeatures = pca.fit_transform(imageFeatures)
 imageFeatures = imageFeatures * (1.0 / np.amax(np.linalg.norm(imageFeatures, axis = 1)))
 
 #Rest of the logic
@@ -322,10 +334,40 @@ meshPath = os.path.join(meshFolder, meshName)
 #Starting the denoising iterations
 ITERS_COUNT = 1
 CLUSTER_SIZE = 30
-IMAGE_FEATURES_WEIGHT = 0.5
-USE_GNF = True
+IMAGE_FEATURES_WEIGHT = 10.0
+USE_LRR = True #Use the low-rank recovery to denoise the normals ?
+USE_GNF = True #Use the GNF to filter the recovered normals ?
+USE_RANDOM_CLUSTERING = False
 GNF_ITERS_MAX = 3
 VERT_UPDT_ITERS_MAX = 1
+
+
+
+
+
+
+
+kdt = KDTree(imageFeatures,  leaf_size = CLUSTER_SIZE, metric = 'euclidean')
+
+patchIdx = 659
+patch = meshPatches[patchIdx]
+dists, neighIdx = kdt.query([imageFeatures[patchIdx]], k = CLUSTER_SIZE)
+neighIdx = neighIdx[0]
+            
+for i in range(CLUSTER_SIZE):
+    neighbourPatch = meshPatches[neighIdx[i]]
+    bm.faces[neighbourPatch.centerFaceIdx].select = True
+
+raise Exception("Prout")
+
+
+
+
+
+
+
+
+
 
 isDone = False
 iterNum = -1
@@ -352,29 +394,37 @@ while not isDone:
     bar = Bar('Performing low-rank recovery', max=len(meshPatches))
     for patchIdx in range(len(meshPatches)):
         patch = meshPatches[patchIdx]
-        #Building the patch matrix
-        dists, neighIdx = kdt.query([allFeatures[patchIdx]], k = CLUSTER_SIZE)
-        neighIdx = neighIdx[0]
-        patchMatrix = np.zeros((3 * Patch.Patch.samplesCount, CLUSTER_SIZE))
-        for i in range(CLUSTER_SIZE):
-            neighbourPatch = meshPatches[neighIdx[i]]
-            patchMatrix[:,i] = neighbourPatch.sampledNormals.reshape((Patch.Patch.samplesCount*3))
         
-        #Performing low-rank recovery
-        E = rankRecoverer.recoverLowRank(patchMatrix)
-        recoveredMat = patchMatrix - E
+        if USE_LRR:
+            #Findings the nearest feature neighbors
+            neighIdx = None
+            if USE_RANDOM_CLUSTERING:
+                neighIdx = [patchIdx] + random.sample(range(len(meshPatches)), CLUSTER_SIZE - 1)
+            else:
+                dists, neighIdx = kdt.query([allFeatures[patchIdx]], k = CLUSTER_SIZE)
+                neighIdx = neighIdx[0]
+            
+            #Building the patch matrix from the neighbors
+            patchMatrix = np.zeros((3 * Patch.Patch.samplesCount, CLUSTER_SIZE))
+            for i in range(CLUSTER_SIZE):
+                neighbourPatch = meshPatches[neighIdx[i]]
+                patchMatrix[:,i] = neighbourPatch.sampledNormals.reshape((Patch.Patch.samplesCount*3))
+            
+            #Performing low-rank recovery
+            E = rankRecoverer.recoverLowRank(patchMatrix)
+            recoveredMat = patchMatrix - E
+            
+            origNormal = np.array(bm.faces[patch.centerFaceIdx].normal)
+            patchNormals = np.array([np.average((recoveredMat[:,i]).reshape(Patch.Patch.samplesCount,3), axis = 0) for i in range(CLUSTER_SIZE)])
+            patchNormals = np.real(patchNormals / np.linalg.norm(patchNormals, axis=1)[:,np.newaxis])
+            
+            clampedDotProds = np.maximum(-1.0, np.minimum(1.0, np.dot(patchNormals, origNormal)))
+            newNormal = patch.eigenVecs @ patchNormals[np.argsort(np.arccos(clampedDotProds))[CLUSTER_SIZE // 2]]
+            
+            recoveredNormals[patch.centerFaceIdx] = newNormal
+        else:
+            recoveredNormals[patch.centerFaceIdx] = np.array(bm.faces[patch.centerFaceIdx].normal)      
         
-        origNormal = np.array(bm.faces[patch.centerFaceIdx].normal)
-        patchNormals = np.array([np.average((recoveredMat[:,i]).reshape(Patch.Patch.samplesCount,3), axis = 0) for i in range(CLUSTER_SIZE)])
-        patchNormals = np.real(patchNormals / np.linalg.norm(patchNormals, axis=1)[:,np.newaxis])
-        
-        clampedDotProds = np.maximum(-1.0, np.minimum(1.0, np.dot(patchNormals, origNormal)))
-        newNormal = patch.eigenVecs @ patchNormals[np.argsort(np.arccos(clampedDotProds))[CLUSTER_SIZE // 2]]
-        
-        #avg = np.average((recoveredMat[:,0]).reshape(Patch.Patch.samplesCount,3), axis = 0)
-        #newNormal = patch.eigenVecs @ (avg / np.linalg.norm(avg))
-        
-        recoveredNormals[patch.centerFaceIdx] = newNormal
         bar.next()
     print("\n")
     
@@ -387,7 +437,6 @@ while not isDone:
     if not USE_GNF:
         filteredNormals = recoveredNormals
     else:
-        
         startGNF = time.time()
         
         tempNormals = {patch.centerFaceIdx : recoveredNormals[patch.centerFaceIdx] for patch in meshPatches}
@@ -395,20 +444,44 @@ while not isDone:
         sigmaS = 2.0 * (0.2)
         sigmaR = 2.0 * (avgEdgeLen)
         
-        bar = Bar('Performing normal filtering', max=GNF_ITERS_MAX)
+        print("Performing normal filtering")
         iterNumGNF = 0
         while True:
             iterNumGNF += 1
             
+            bar = Bar('Filtering iteration number {}'.format(iterNumGNF), max=len(meshPatches))
             for patch in meshPatches:
+                #We find the most consistent neighborhood
+                mostConsistentNeighbor = None
+                if iterNumGNF > 3:
+                    bestScore = float('inf')
+                    for neighFaceIdx in patch.rings[0] + patch.rings[1]:
+                        neighPatch = faceToPatches[neighFaceIdx]
+                        neighFace = bm.faces[neighFaceIdx]
+                        #Selecting the edges whose two faces are in the patch
+                        edgeSet = set([edge for vert in neighFace.verts for edge in vert.link_edges if len(edge.link_faces) == 2])
+                        saliencies = [np.linalg.norm(tempNormals[edge.link_faces[0].index] - tempNormals[edge.link_faces[1].index]) for edge in edgeSet]
+                        Rp = np.amax(saliencies) / np.sum(saliencies)
+                        innerRingsFaces = neighPatch.rings[0] + neighPatch.rings[1]
+                        Hp = np.amax(pdist([tempNormals[ring1FaceIdx] for ring1FaceIdx in innerRingsFaces]))
+                        consistencyScore = Hp * Rp
+                        
+                        if consistencyScore < bestScore:
+                            bestScore = consistencyScore
+                            mostConsistentNeighbor = neighPatch
+                else:
+                    mostConsistentNeighbor = patch
+                
+                #We then conduct normal filtering on the found best neighborhood
                 patchCenter = patch.getOrigin(bm)
                 patchNormal = tempNormals[patch.centerFaceIdx]
                 
-                weightedNormals = [bm.faces[neighFaceIdx].calc_area() * math.exp(-(np.linalg.norm(Patch.Patch.getFaceBarycenter(bm.faces[neighFaceIdx]) - patchCenter)**2.0)/sigmaS) * math.exp(-(np.linalg.norm(tempNormals[neighFaceIdx] - patchNormal)**2.0)/sigmaR) * tempNormals[neighFaceIdx] for neighFaceIdx in patch.rings[1]] 
+                weightedNormals = [bm.faces[neighFaceIdx].calc_area() * math.exp(-(np.linalg.norm(Patch.Patch.getFaceBarycenter(bm.faces[neighFaceIdx]) - patchCenter)**2.0)/sigmaS) * math.exp(-(np.linalg.norm(tempNormals[neighFaceIdx] - patchNormal)**2.0)/sigmaR) * tempNormals[neighFaceIdx] for neighFaceIdx in mostConsistentNeighbor.rings[1]] 
                 filteredNormal = np.sum(weightedNormals, axis = 0)
                 
                 filteredNormals[patch.centerFaceIdx] = filteredNormal / np.linalg.norm(filteredNormal)
-            
+                bar.next()
+                
             tot = 0.0
             for faceIdx in tempNormals:
                 tot += np.linalg.norm(tempNormals[faceIdx] - filteredNormals[faceIdx])
@@ -425,14 +498,12 @@ while not isDone:
                 print("Maximum number of normal filtering iterations reached")
                 break
             
-            bar.next()
-        
         print("\n")
         
         endGNF = time.time()
         iterData['timeGNF'] = endGNF - startGNF
     
-    if False:
+    if True:
         #Debug drawing
         for patch in meshPatches:
             centerPosIdx = patch.centerFaceIdx
@@ -450,21 +521,24 @@ while not isDone:
     for iii in range(VERT_UPDT_ITERS_MAX):
         for vert in bm.verts:
             vertexPos = tempPos[vert.index]
-            
             disp = np.array([0.0, 0.0, 0.0])
             
-            #Finding every neighbouring vertex by using linked edge
-            for neighEdge in vert.link_edges:
-                #Finding the neighboring vertex
-                otherVert = neighEdge.verts[0 if list(neighEdge.verts)[0] != vert else 1]
-                
-                #Parsing the faces linked to that edge (and thus also neighboring the central vertex)
-                for linkedFace in neighEdge.link_faces:
-                    faceNormal = filteredNormals[linkedFace.index]
+            if False:
+                #Finding every neighbouring vertex by using linked edge
+                for neighEdge in vert.link_edges:
+                    #Finding the neighboring vertex
+                    otherVert = neighEdge.verts[0 if list(neighEdge.verts)[0] != vert else 1]
                     
-                    disp += faceNormal * np.dot(faceNormal, tempPos[otherVert.index] - vertexPos)
-            
-            disp = (1.0/(3.0 * len(vert.link_faces))) * disp
+                    #Parsing the faces linked to that edge (and thus also neighboring the central vertex)
+                    for linkedFace in neighEdge.link_faces:
+                        faceNormal = filteredNormals[linkedFace.index]
+                        
+                        disp += faceNormal * np.dot(faceNormal, tempPos[otherVert.index] - vertexPos)
+                
+                disp = (1.0/(3.0 * len(vert.link_faces))) * disp
+                
+            if True:
+                disp = np.sum([filteredNormals[neighFace.index] * np.dot(filteredNormals[neighFace.index], np.average([tempPos[vertFace.index] for vertFace in neighFace.verts], axis = 0) - tempPos[vert.index]) for neighFace in vert.link_faces], axis = 0) / len(vert.link_faces)
             
             newPos[vert.index] = vertexPos + disp 
     
