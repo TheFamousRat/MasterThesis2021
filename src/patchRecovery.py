@@ -212,23 +212,10 @@ print("Ensuring homogeneous UV map scale")
 uvMapDensities = [meshPatches[i].totalArea / meshPatches[i].getUVMapSurface(bm) for i in range(len(meshPatches))]
 minDens = np.amin(uvMapDensities)
 
+#Rescaling the UV maps to have the same detail density
 for i in range(len(meshPatches)):
     patch = meshPatches[i]
     patch.scaleUVMap(math.sqrt(0.5 * uvMapDensities[i] / minDens))
-
-surfaces = [patch.getUVMapSurface(bm) for patch in meshPatches] 
-print(np.amax(surfaces))
-print(np.amin(surfaces))
-
-img = bpy.data.images['bakedImage']
-for i in [691, 683, 673, 674, 672, 590, 589, 687, 690]:
-    patch = faceToPatches[i]
-    Patch.Patch.setupBakingEnvironment(bm)
-    patch.bakePatchTexture(bm)
-    img.pixels = list(patch.pixels[:])
-    img.save_render('PatchBakingSamples/{}.png'.format(i))
-
-raise Exception("Caca")
 
 #Textures
 print("---Textures sampling---")
@@ -340,34 +327,6 @@ USE_GNF = True #Use the GNF to filter the recovered normals ?
 USE_RANDOM_CLUSTERING = False
 GNF_ITERS_MAX = 3
 VERT_UPDT_ITERS_MAX = 1
-
-
-
-
-
-
-
-kdt = KDTree(imageFeatures,  leaf_size = CLUSTER_SIZE, metric = 'euclidean')
-
-patchIdx = 659
-patch = meshPatches[patchIdx]
-dists, neighIdx = kdt.query([imageFeatures[patchIdx]], k = CLUSTER_SIZE)
-neighIdx = neighIdx[0]
-            
-for i in range(CLUSTER_SIZE):
-    neighbourPatch = meshPatches[neighIdx[i]]
-    bm.faces[neighbourPatch.centerFaceIdx].select = True
-
-raise Exception("Prout")
-
-
-
-
-
-
-
-
-
 
 isDone = False
 iterNum = -1
