@@ -128,6 +128,26 @@ def createBMesh(msh):
     avgEdgeLen = np.average([edge.calc_length() for edge in bmsh.edges])
     return bmsh, avgEdgeLen
 
+def calcAngleAvgDiff(refObj, recObj):
+    if len(refObj.data.polygons) != len(recObj.data.polygons):
+        raise Exception("Not the same number of faces !")
+
+    dotProds = [np.dot(refObj.data.polygons[i].normal, recObj.data.polygons[i].normal) for i in range(len(refObj.data.polygons))]
+    dotProds = np.maximum(-1.0, np.minimum(1.0, dotProds))
+    angleDiffs = np.arccos(dotProds)
+    
+    with open("shitAss.txt", "w") as f:
+        f.write(str([round(x, 4) for x in angleDiffs]))
+    
+    #weights = np.array([refObj.data.polygons[i].area for i in range(len(refObj.data.polygons))])
+    return np.average(angleDiffs) * 180.0 / math.pi, np.std(angleDiffs) * 180.0 / math.pi
+
+def calcHausdorff(refObj, recObj):
+    if len(refObj.data.polygons) != len(recObj.data.polygons):
+        raise Exception("Not the same number of faces !")
+    
+    return directed_hausdorff(np.array([v.co for v in refObj.data.vertices]), np.array([v.co for v in recObj.data.vertices]))
+
 ###Body
 #Creating the bmesh
 selectedObj = bpy.context.active_object
@@ -269,7 +289,7 @@ if len(imageFeatures) == 0:
     from tensorflow.keras.applications import ResNet50
     model = ResNet50(weights='imagenet', include_top=False, input_shape=(Patch.Patch.bakedImgSize, Patch.Patch.bakedImgSize, 3), pooling="max")
     
-    formattedPatchPixels = np.array([np.delete(patch.pixels.reshape([64, 64, 4]), 2, 2) for patch in meshPatches])
+    formattedPatchPixels = np.array([np.delete(patch.pixels.reshape([Patch.Patch.bakedImgSize, Patch.Patch.bakedImgSize, 4]), 2, 2) for patch in meshPatches])
     formattedPatchPixels = tf.keras.applications.resnet50.preprocess_input(formattedPatchPixels)
 
     imageFeatures = []
@@ -318,10 +338,12 @@ if not os.path.exists(meshFolder):
 
 meshPath = os.path.join(meshFolder, meshName)
 
+refObj = bpy.data.objects["mascaron_ref"]
+
 #Starting the denoising iterations
 ITERS_COUNT = 1
 CLUSTER_SIZE = 30
-IMAGE_FEATURES_WEIGHT = 10.0
+IMAGE_FEATURES_WEIGHT = 0.0
 USE_LRR = True #Use the low-rank recovery to denoise the normals ?
 USE_GNF = True #Use the GNF to filter the recovered normals ?
 USE_RANDOM_CLUSTERING = False
@@ -348,7 +370,8 @@ while not isDone:
     
     ##Performing recovery on each patch
     startLRR = time.time()
-    
+    nucVals = [0.0] * len(meshPatches)
+    timesLLR = [0.0] * len(meshPatches)
     recoveredNormals = {}
     bar = Bar('Performing low-rank recovery', max=len(meshPatches))
     for patchIdx in range(len(meshPatches)):
@@ -370,8 +393,14 @@ while not isDone:
                 patchMatrix[:,i] = neighbourPatch.sampledNormals.reshape((Patch.Patch.samplesCount*3))
             
             #Performing low-rank recovery
+            nucVals[patchIdx] = np.linalg.norm(patchMatrix, ord = "nuc")
+            startPatchLRR = time.time()
+              
             E = rankRecoverer.recoverLowRank(patchMatrix)
             recoveredMat = patchMatrix - E
+            
+            endPatchLRR = time.time()
+            timesLLR[patchIdx] = endPatchLRR - startPatchLRR
             
             origNormal = np.array(bm.faces[patch.centerFaceIdx].normal)
             patchNormals = np.array([np.average((recoveredMat[:,i]).reshape(Patch.Patch.samplesCount,3), axis = 0) for i in range(CLUSTER_SIZE)])
@@ -387,6 +416,12 @@ while not isDone:
         bar.next()
     print("\n")
     
+    np.savetxt("nucVals_{}.csv".format(str(IMAGE_FEATURES_WEIGHT).replace(".", "_")), nucVals, delimiter = ",")
+    stringName = "{}_{}w".format(selectedObj.name, str(IMAGE_FEATURES_WEIGHT).replace(".", "_"))
+    np.savetxt("LRRTimes/LRRTimeVsNucNorm_{}.csv".format(stringName), np.transpose([nucVals, timesLLR]), delimiter = ",")
+    
+    raise Exception("Rpout")
+    
     endLRR = time.time()
     iterData['timeLRR'] = endLRR - startLRR
     
@@ -400,7 +435,7 @@ while not isDone:
         
         tempNormals = {patch.centerFaceIdx : recoveredNormals[patch.centerFaceIdx] for patch in meshPatches}
         epsGNF = 1e-2
-        sigmaS = 2.0 * (0.2)
+        sigmaS = 2.0 * (0.2)**2.0
         sigmaR = 2.0 * (avgEdgeLen)
         
         print("Performing normal filtering")
@@ -410,7 +445,7 @@ while not isDone:
             
             bar = Bar('Filtering iteration number {}'.format(iterNumGNF), max=len(meshPatches))
             for patch in meshPatches:
-                #We find the most consistent neighborhood
+                #We find the most consistent neighborhood if enough iterations have passed
                 mostConsistentNeighbor = None
                 if iterNumGNF > 3:
                     bestScore = float('inf')
@@ -435,12 +470,13 @@ while not isDone:
                 patchCenter = patch.getOrigin(bm)
                 patchNormal = tempNormals[patch.centerFaceIdx]
                 
-                weightedNormals = [bm.faces[neighFaceIdx].calc_area() * math.exp(-(np.linalg.norm(Patch.Patch.getFaceBarycenter(bm.faces[neighFaceIdx]) - patchCenter)**2.0)/sigmaS) * math.exp(-(np.linalg.norm(tempNormals[neighFaceIdx] - patchNormal)**2.0)/sigmaR) * tempNormals[neighFaceIdx] for neighFaceIdx in mostConsistentNeighbor.rings[1]] 
+                weightedNormals = [bm.faces[neighFaceIdx].calc_area() * math.exp(-(np.linalg.norm(Patch.Patch.getFaceBarycenter(bm.faces[neighFaceIdx]) - patchCenter)**2.0)/sigmaR) * math.exp(-(np.linalg.norm(tempNormals[neighFaceIdx] - patchNormal)**2.0)/sigmaS) * tempNormals[neighFaceIdx] for neighFaceIdx in mostConsistentNeighbor.rings[1]] 
                 filteredNormal = np.sum(weightedNormals, axis = 0)
                 
                 filteredNormals[patch.centerFaceIdx] = filteredNormal / np.linalg.norm(filteredNormal)
                 bar.next()
-                
+            
+            #Measuring the total amount of change
             tot = 0.0
             for faceIdx in tempNormals:
                 tot += np.linalg.norm(tempNormals[faceIdx] - filteredNormals[faceIdx])
@@ -450,6 +486,14 @@ while not isDone:
             
             print(avgTot)
             
+            
+            for patch in meshPatches:
+                centerPosIdx = patch.centerFaceIdx
+                centerPos = iterNumGNF * np.array([2.0, 0.0, 0.0]) + Patch.Patch.getFaceBarycenter(bm.faces[centerPosIdx])
+                dir = filteredNormals[centerPosIdx]
+                debugDrawing.draw_line(gpencil, gp_frame, (centerPos, centerPos + 0.02 * dir), (0.5, 3.0), "00ffff")
+            
+            #Checking stopping conditions
             if avgTot < epsGNF:
                 print("Normal filtering converged, stopping")
                 break
@@ -462,8 +506,8 @@ while not isDone:
         endGNF = time.time()
         iterData['timeGNF'] = endGNF - startGNF
     
-    if True:
-        #Debug drawing
+    if False:
+        #Debug drawing to check the normals
         for patch in meshPatches:
             centerPosIdx = patch.centerFaceIdx
             centerPos = Patch.Patch.getFaceBarycenter(bm.faces[centerPosIdx])
@@ -515,10 +559,14 @@ while not isDone:
         vert.co = newPos[vert.index]
     changeRel = (totChange / sum(vertMoveWeight.values())) / len(bm.verts)
     
+    #Recording the weighted change in vertex positions
     iterData['changeRel'] = changeRel
     
     print("Updating mesh representation in Blender...")
     bmesh.update_edit_mesh(bpy.context.active_object.data)
+    
+    #Recording the different with the reference mesh
+    iterData['diffRef'] = calcAngleAvgDiff(refObj, selectedObj)
     
     print("Export mesh at this step")
     exportToObj(selectedObj, meshPath.format(iterNum))

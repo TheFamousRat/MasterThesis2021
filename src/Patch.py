@@ -364,10 +364,6 @@ class Patch:
             self.verticesUVs[vIdx] = scaleFac * (self.verticesUVs[vIdx] - cntr) + cntr
 
     def applyUVMap(self, bmeshObj):
-        for vert in bmeshObj.verts:
-            for loop in vert.link_loops:
-                loop[bmeshObj.loops.layers.uv[Patch.uvLayerName]].uv = Patch.uvExclusionPoint
-
         for vIdx in self.verticesIdxList:
             self.setVertUV(bmeshObj, vIdx, Patch.uvLayerName, self.verticesUVs[vIdx])
 
@@ -385,10 +381,10 @@ class Patch:
         self.pixels = np.array(bpy.data.images[Patch.bakedImgName].pixels[:], dtype=np.float16)
 
         #Remove UVs from sight
-        #for vertIdx in self.verticesIdxList:
-        #    vert = bmeshObj.verts[vertIdx]
-        #    for loop in vert.link_loops:
-        #        loop[bmeshObj.loops.layers.uv[Patch.uvLayerName]].uv = Patch.uvExclusionPoint
+        for vertIdx in self.verticesIdxList:
+            vert = bmeshObj.verts[vertIdx]
+            for loop in vert.link_loops:
+                loop[bmeshObj.loops.layers.uv[Patch.uvLayerName]].uv = Patch.uvExclusionPoint
 
     def getNormalSamplesPosition(self, bmeshObj):
         """
