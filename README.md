@@ -1,1 +1,7 @@
 # MasterThesis2021
+
+Repository for my master thesis, done in the context of my MSc at the KU Leuven, in Belgium.
+
+The goal of this thesis was to explore the effect of including information contained within the texture of a photo-scanned object into a denoising process. The denoising paradigm used was the Non-Local Similarity Low-Rank Recovery algorithm, which locates similar patches across the surface of the object, groups them together, and enforces their similarity through the solving of a low-rank problem. This similarity enforcment allows for a recovery of noise-free versions of the patches' characteristics, that can be used to update the surface so that it matches those recovered characteristics, gradually removing the noise from the surface.
+
+The overall conclusion of the thesis was that the inclusion of texture information led to a higher similarity among the patch groups, resulting in faster low-rank recovery times and in marginally better denoising results. However, the pre-processing step of the algorithm is as of now prohibitively slow, the biggest bottleneck being the extraction of local texture pixels from each patch. The algorithm also requires a large amount of hyperparameters tweaking, which makes the method unsuitable for non-experienced users. Those rough results showed however the potential of the technique, and could likely be significantly improved upon through more efficient image extraction and hyperparameter learning.
